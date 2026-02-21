@@ -1,0 +1,14 @@
+2025-08-26 17:15:00,306 | [32mINFO[0m | discord_bot | validate:97 | Configuration validated successfully
+2025-08-26 17:15:00,307 | [32mINFO[0m | discord_bot | __init__:210 | Bot instance initialized
+2025-08-26 17:15:00,309 | [32mINFO[0m | discord_bot | <module>:760 | 🚀 Starting NatsuBot...
+2025-08-26 17:15:01,127 | [32mINFO[0m | discord_bot | setup_hook:229 | Setting up bot components...
+2025-08-26 17:15:01,129 | [32mINFO[0m | discord_bot | _load_extensions:274 | ✅ Loaded: rule34commands
+2025-08-26 17:15:01,130 | [31mERROR[0m | discord_bot | _load_extensions:277 | ❌ Failed to load database: Extension 'cogs.database' raised an error: ModuleNotFoundError: No module named 'verificationg'
+2025-08-26 17:15:01,131 | [32mINFO[0m | discord_bot | _load_extensions:274 | ✅ Loaded: verification
+2025-08-26 17:15:01,260 | [31mERROR[0m | discord_bot | _load_extensions:277 | ❌ Failed to load game: Extension 'cogs.game' raised an error: TypeError: duplicate base class TimeoutError
+2025-08-26 17:15:01,260 | [32mINFO[0m | discord_bot | _load_extensions:281 | Extension loading complete: 2 loaded, 2 failed
+2025-08-26 17:15:01,260 | [33mWARNING[0m | discord_bot | _load_extensions:284 | Failed cogs: database, game
+2025-08-26 17:15:01,261 | [32mINFO[0m | discord_bot | setup_hook:244 | Bot setup completed
+2025-08-26 17:15:01,262 | DEBUG | discord_bot | cleanup_task:481 | Cleanup task executed
+2025-08-26 17:15:01,262 | [32mINFO[0m | discord_bot | auto_backup:513 | Database backed up to backups/backup_20250826.json
+2025-08-26 17:15:04,357 | [32mINFO[0m | discord_bot | on_ready:293 | ✅ Logged in as natsu#8011 (ID: 1309808442751455243)

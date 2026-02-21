@@ -1,0 +1,21 @@
+2025-09-04 13:07:41,883 | [32mINFO[0m | discord_bot | validate:101 | Configuration validated successfully
+2025-09-04 13:07:41,884 | [32mINFO[0m | discord_bot | __init__:214 | Bot instance initialized
+2025-09-04 13:07:41,885 | [32mINFO[0m | discord_bot | <module>:780 | 🚀 Starting NatsuBot...
+2025-09-04 13:07:42,762 | [32mINFO[0m | discord_bot | setup_hook:233 | Setting up bot components...
+2025-09-04 13:07:42,766 | [32mINFO[0m | discord_bot | _load_extensions:278 | ✅ Loaded: verification
+2025-09-04 13:07:42,773 | [32mINFO[0m | discord_bot | _load_extensions:278 | ✅ Loaded: rule34commands
+2025-09-04 13:07:42,786 | [32mINFO[0m | discord_bot | _load_extensions:278 | ✅ Loaded: nsfwinder
+2025-09-04 13:07:42,787 | [32mINFO[0m | discord_bot | _load_extensions:285 | Extension loading complete: 3 loaded, 0 failed
+2025-09-04 13:07:42,787 | [32mINFO[0m | discord_bot | setup_hook:248 | Bot setup completed
+2025-09-04 13:07:42,788 | DEBUG | discord_bot | cleanup_task:495 | Cleanup task executed
+2025-09-04 13:07:42,788 | [32mINFO[0m | discord_bot | auto_backup:533 | Database backed up to backups/backup_20250904.json
+2025-09-04 13:07:45,809 | [32mINFO[0m | discord_bot | on_ready:297 | ✅ Logged in as natsu#8011 (ID: 1309808442751455243)
+2025-09-04 13:07:46,312 | [32mINFO[0m | discord_bot | _sync_commands:334 | ✅ Synced 6 global commands
+2025-09-04 13:07:46,312 | DEBUG | discord_bot | _sync_commands:337 | Command sync took 502.91ms
+2025-09-04 13:07:46,313 | [32mINFO[0m | discord_bot | on_ready:313 | Connected to 4 guilds:
+2025-09-04 13:07:46,313 | [32mINFO[0m | discord_bot | on_ready:316 |   • kirigakure: the hidden mist village (1331194168218751100) - 24 members
+2025-09-04 13:07:46,313 | [32mINFO[0m | discord_bot | on_ready:316 |   • ⚛  🎀  𝒮𝐸𝒢𝒢𝒴  🎀  ⚛ (1373276652796121210) - 24 members
+2025-09-04 13:07:46,313 | [32mINFO[0m | discord_bot | on_ready:316 |   • Raiduuuuwu (1306841087490392145) - 11 members
+2025-09-04 13:07:46,313 | [32mINFO[0m | discord_bot | on_ready:316 |   • gamer 1 (1303326543069708329) - 7 members
+2025-09-04 13:12:42,788 | DEBUG | discord_bot | cleanup_task:495 | Cleanup task executed
+2025-09-04 13:17:42,790 | DEBUG | discord_bot | cleanup_task:495 | Cleanup task executed

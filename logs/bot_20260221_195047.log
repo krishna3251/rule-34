@@ -1,0 +1,13 @@
+2026-02-21 19:50:47,936 | [33mWARNING[0m | discord_bot | validate:118 | No OWNER_IDS specified. Owner-only commands will be unavailable.
+2026-02-21 19:50:47,938 | [32mINFO[0m | discord_bot | validate:122 | Configuration validated successfully
+2026-02-21 19:50:47,974 | [32mINFO[0m | discord_bot | __init__:247 | Bot instance initialized
+2026-02-21 19:50:48,786 | [32mINFO[0m | discord_bot | setup_hook:265 | Setting up bot components...
+2026-02-21 19:51:23,120 | [32mINFO[0m | discord_bot | _load_extensions:317 | Extension loading complete: 7 loaded, 0 failed
+2026-02-21 19:51:23,125 | [32mINFO[0m | discord_bot | setup_hook:280 | Bot setup completed
+2026-02-21 19:51:23,127 | DEBUG | discord_bot | cleanup_task:554 | Cleanup task executed
+2026-02-21 19:51:23,130 | [32mINFO[0m | discord_bot | auto_backup:588 | Database backed up to backups/backup_20260221.json
+2026-02-21 19:51:26,659 | DEBUG | discord_bot | _sync_commands:375 | Command sync took 522.91ms
+2026-02-21 19:51:26,659 | [32mINFO[0m | discord_bot | on_ready:346 | Connected to 4 guilds:
+2026-02-21 19:51:26,673 | [32mINFO[0m | discord_bot | on_ready:351 |   • kirigakure: the hidden mist village (1331194168218751100) - 25 members
+2026-02-21 19:51:26,676 | [32mINFO[0m | discord_bot | on_ready:351 |   • Raiduuuuwu (1306841087490392145) - 11 members
+2026-02-21 19:51:26,677 | [32mINFO[0m | discord_bot | on_ready:351 |   • gamer 1 (1303326543069708329) - 8 members

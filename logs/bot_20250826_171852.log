@@ -1,0 +1,13 @@
+2025-08-26 17:18:52,302 | [32mINFO[0m | discord_bot | validate:97 | Configuration validated successfully
+2025-08-26 17:18:52,303 | [32mINFO[0m | discord_bot | __init__:210 | Bot instance initialized
+2025-08-26 17:18:52,304 | [32mINFO[0m | discord_bot | <module>:760 | 🚀 Starting NatsuBot...
+2025-08-26 17:18:53,229 | [32mINFO[0m | discord_bot | setup_hook:229 | Setting up bot components...
+2025-08-26 17:18:53,232 | [32mINFO[0m | discord_bot | _load_extensions:274 | ✅ Loaded: rule34commands
+2025-08-26 17:18:53,233 | [32mINFO[0m | discord_bot | _load_extensions:274 | ✅ Loaded: verification
+2025-08-26 17:18:53,234 | [31mERROR[0m | discord_bot | _load_extensions:277 | ❌ Failed to load database: Extension 'cogs.database' raised an error: ModuleNotFoundError: No module named 'verification'
+2025-08-26 17:18:53,235 | [31mERROR[0m | discord_bot | _load_extensions:277 | ❌ Failed to load game: Extension 'cogs.game' raised an error: IndentationError: expected an indented block after 'try' statement on line 18 (game.py, line 19)
+2025-08-26 17:18:53,235 | [32mINFO[0m | discord_bot | _load_extensions:281 | Extension loading complete: 2 loaded, 2 failed
+2025-08-26 17:18:53,235 | [33mWARNING[0m | discord_bot | _load_extensions:284 | Failed cogs: database, game
+2025-08-26 17:18:53,235 | [32mINFO[0m | discord_bot | setup_hook:244 | Bot setup completed
+2025-08-26 17:18:53,236 | DEBUG | discord_bot | cleanup_task:481 | Cleanup task executed
+2025-08-26 17:18:53,236 | [32mINFO[0m | discord_bot | auto_backup:513 | Database backed up to backups/backup_20250826.json

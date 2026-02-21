@@ -1,0 +1,23 @@
+2026-02-21 19:53:02,192 | [33mWARNING[0m | discord_bot | validate:118 | No OWNER_IDS specified. Owner-only commands will be unavailable.
+2026-02-21 19:53:02,192 | [32mINFO[0m | discord_bot | validate:122 | Configuration validated successfully
+2026-02-21 19:53:02,195 | [32mINFO[0m | discord_bot | __init__:247 | Bot instance initialized
+2026-02-21 19:53:03,094 | [32mINFO[0m | discord_bot | setup_hook:265 | Setting up bot components...
+2026-02-21 19:53:06,932 | [32mINFO[0m | discord_bot | _load_extensions:317 | Extension loading complete: 7 loaded, 0 failed
+2026-02-21 19:53:06,940 | [32mINFO[0m | discord_bot | setup_hook:280 | Bot setup completed
+2026-02-21 19:53:06,944 | DEBUG | discord_bot | cleanup_task:554 | Cleanup task executed
+2026-02-21 19:53:06,946 | [32mINFO[0m | discord_bot | auto_backup:588 | Database backed up to backups/backup_20260221.json
+2026-02-21 19:53:10,755 | DEBUG | discord_bot | _sync_commands:375 | Command sync took 660.11ms
+2026-02-21 19:53:10,756 | [32mINFO[0m | discord_bot | on_ready:346 | Connected to 4 guilds:
+2026-02-21 19:53:10,759 | [32mINFO[0m | discord_bot | on_ready:351 |   • kirigakure: the hidden mist village (1331194168218751100) - 25 members
+2026-02-21 19:53:10,759 | [32mINFO[0m | discord_bot | on_ready:351 |   • Raiduuuuwu (1306841087490392145) - 11 members
+2026-02-21 19:53:10,760 | [32mINFO[0m | discord_bot | on_ready:351 |   • gamer 1 (1303326543069708329) - 8 members
+2026-02-21 19:58:06,956 | DEBUG | discord_bot | cleanup_task:554 | Cleanup task executed
+2026-02-21 20:03:06,955 | DEBUG | discord_bot | cleanup_task:554 | Cleanup task executed
+2026-02-21 20:08:06,956 | DEBUG | discord_bot | cleanup_task:554 | Cleanup task executed
+2026-02-21 20:13:06,958 | DEBUG | discord_bot | cleanup_task:554 | Cleanup task executed
+2026-02-21 20:18:06,945 | DEBUG | discord_bot | cleanup_task:554 | Cleanup task executed
+2026-02-21 20:23:06,946 | DEBUG | discord_bot | cleanup_task:554 | Cleanup task executed
+2026-02-21 20:28:06,949 | DEBUG | discord_bot | cleanup_task:554 | Cleanup task executed
+2026-02-21 20:33:06,950 | DEBUG | discord_bot | cleanup_task:554 | Cleanup task executed
+2026-02-21 20:38:06,944 | DEBUG | discord_bot | cleanup_task:554 | Cleanup task executed
+2026-02-21 20:43:06,946 | DEBUG | discord_bot | cleanup_task:554 | Cleanup task executed

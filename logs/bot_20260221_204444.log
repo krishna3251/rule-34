@@ -1,0 +1,28 @@
+2026-02-21 20:44:44,646 | [33mWARNING[0m | discord_bot | validate:122 | No OWNER_IDS specified. Owner-only commands will be unavailable.
+2026-02-21 20:44:44,661 | [32mINFO[0m | discord_bot | validate:126 | Configuration validated successfully
+2026-02-21 20:44:44,691 | [32mINFO[0m | discord_bot | __init__:251 | Bot instance initialized
+2026-02-21 20:44:44,694 | [32mINFO[0m | discord_bot | <module>:835 | 🚀 Starting NatsuBot...
+2026-02-21 20:44:45,729 | [32mINFO[0m | discord_bot | setup_hook:269 | Setting up bot components...
+2026-02-21 20:44:45,739 | [32mINFO[0m | discord_bot | _load_extensions:314 | ✅ Loaded: Detection_Cog
+2026-02-21 20:44:48,657 | [32mINFO[0m | discord_bot | _load_extensions:314 | ✅ Loaded: game
+2026-02-21 20:44:48,662 | [32mINFO[0m | discord_bot | _load_extensions:314 | ✅ Loaded: instructor
+2026-02-21 20:44:48,671 | [32mINFO[0m | discord_bot | _load_extensions:314 | ✅ Loaded: nutaku
+2026-02-21 20:44:48,678 | [32mINFO[0m | discord_bot | _load_extensions:314 | ✅ Loaded: r34
+2026-02-21 20:44:48,686 | [32mINFO[0m | discord_bot | _load_extensions:314 | ✅ Loaded: roleplay_cog_sqlite
+2026-02-21 20:44:48,690 | [32mINFO[0m | discord_bot | _load_extensions:314 | ✅ Loaded: verification
+2026-02-21 20:44:48,690 | [32mINFO[0m | discord_bot | _load_extensions:321 | Extension loading complete: 7 loaded, 0 failed
+2026-02-21 20:44:48,691 | [32mINFO[0m | discord_bot | setup_hook:284 | Bot setup completed
+2026-02-21 20:44:48,692 | DEBUG | discord_bot | cleanup_task:558 | Cleanup task executed
+2026-02-21 20:44:48,693 | [32mINFO[0m | discord_bot | auto_backup:592 | Database backed up to backups/backup_20260221.json
+2026-02-21 20:44:51,846 | [32mINFO[0m | discord_bot | on_ready:335 | ✅ Logged in as natsu#8011 (ID: 1309808442751455243)
+2026-02-21 20:44:52,350 | [32mINFO[0m | discord_bot | _sync_commands:376 | ✅ Synced 13 global commands
+2026-02-21 20:44:52,351 | DEBUG | discord_bot | _sync_commands:379 | Command sync took 503.53ms
+2026-02-21 20:44:52,353 | [32mINFO[0m | discord_bot | on_ready:350 | Connected to 4 guilds:
+2026-02-21 20:44:52,354 | [32mINFO[0m | discord_bot | on_ready:355 |   • ⚛  🎀  𝒮𝐸𝒢𝒢𝒴  🎀  ⚛ (1373276652796121210) - 27 members
+2026-02-21 20:44:52,356 | [32mINFO[0m | discord_bot | on_ready:355 |   • kirigakure: the hidden mist village (1331194168218751100) - 25 members
+2026-02-21 20:44:52,361 | [32mINFO[0m | discord_bot | on_ready:355 |   • Raiduuuuwu (1306841087490392145) - 11 members
+2026-02-21 20:44:52,363 | [32mINFO[0m | discord_bot | on_ready:355 |   • gamer 1 (1303326543069708329) - 8 members
+2026-02-21 20:49:48,716 | DEBUG | discord_bot | cleanup_task:558 | Cleanup task executed
+2026-02-21 20:54:48,762 | DEBUG | discord_bot | cleanup_task:558 | Cleanup task executed
+2026-02-21 20:59:48,703 | DEBUG | discord_bot | cleanup_task:558 | Cleanup task executed
+2026-02-21 21:04:48,704 | DEBUG | discord_bot | cleanup_task:558 | Cleanup task executed
