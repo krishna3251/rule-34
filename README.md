@@ -142,6 +142,34 @@ rule-34/
 
 ---
 
+## 🖼️ Reverse Image Source Finder
+
+Rule43 also supports reverse-image lookup through dedicated source adapters.
+
+~~~text
+Discord image
+     │
+     ▼
+ImageSourceEngine
+     ├── trace.moe
+     │     └── anime scene / episode / timestamp
+     │
+     └── SauceNAO
+           └── indexed artwork / database / artist
+~~~
+
+Use:
+
+~~~text
+/source
+~~~
+
+and attach an image, or provide a public image URL.
+
+The system returns indexed matches with similarity, source/database information, artist data when available, and anime episode/timestamp data when supplied by the source.
+
+SauceNAO requires <code>SAUCENAO_API_KEY</code>. trace.moe does not require a key for its normal search endpoint. Results depend on each provider's indexed databases, so a miss does not prove that an image has no original source.
+
 ## 🔎 Unified Media Index
 
 Rule43 now has a modular source-adapter layer for cross-source discovery:
