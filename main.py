@@ -1,5 +1,7 @@
 import os
 import sys
+import ast
+import sqlite3
 
 # Force UTF-8 on Windows before anything else touches stdout/stderr
 os.environ['PYTHONUTF8'] = '1'
@@ -108,6 +110,7 @@ class Config:
     ENABLE_AUTO_BACKUP = os.getenv("ENABLE_AUTO_BACKUP",
                                    "true").lower() == "true"
     DEBUG_MODE = os.getenv("DEBUG_MODE", "false").lower() == "true"
+    DEBUG_GUILD_ID = int(os.getenv("DEBUG_GUILD_ID", "0") or "0")
 
     # Rule34 API credentials
     R34_USER_ID = os.getenv("R34_USER_ID")
@@ -287,19 +290,35 @@ class NatsuBot(commands.Bot):
         logger.info("Bot setup completed")
 
     async def _load_extensions(self):
-        """Load all cog extensions"""
+        """Load only Python modules that expose a Discord extension setup() function."""
         os.makedirs("cogs", exist_ok=True)
 
         loaded = []
         failed = []
-
-        # Discover all cogs that actually exist
         all_cogs = []
-        for filename in os.listdir("cogs"):
-            if filename.endswith(".py") and not filename.startswith("__"):
-                all_cogs.append(filename[:-3])
 
-        # Load cogs
+        for filename in sorted(os.listdir("cogs")):
+            if not filename.endswith(".py") or filename.startswith("__"):
+                continue
+
+            path = os.path.join("cogs", filename)
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    tree = ast.parse(f.read(), filename=path)
+
+                has_setup = any(
+                    isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef))
+                    and node.name == "setup"
+                    for node in tree.body
+                )
+                if has_setup:
+                    all_cogs.append(filename[:-3])
+                else:
+                    logger.debug(f"⏭️ Skipping helper module: {filename}")
+            except (OSError, SyntaxError) as e:
+                failed.append(filename[:-3])
+                logger.error(f"❌ Cannot inspect {filename}: {e}")
+
         for cog_name in all_cogs:
             try:
                 await self.load_extension(f"cogs.{cog_name}")
@@ -356,12 +375,11 @@ class NatsuBot(commands.Bot):
         try:
             start = time.time()
 
-            if Config.DEBUG_MODE and Config.OWNER_IDS:
-                # Sync to test guild only in debug mode
-                test_guild = discord.Object(id=Config.OWNER_IDS[0])
+            if Config.DEBUG_MODE and Config.DEBUG_GUILD_ID:
+                test_guild = discord.Object(id=Config.DEBUG_GUILD_ID)
                 synced = await self.tree.sync(guild=test_guild)
                 logger.info(
-                    f"✅ Synced {len(synced)} commands to test guild (Debug Mode)"
+                    f"✅ Synced {len(synced)} commands to debug guild {Config.DEBUG_GUILD_ID}"
                 )
             else:
                 # Global sync
@@ -576,16 +594,26 @@ class NatsuBot(commands.Bot):
 
     @tasks.loop(hours=24)
     async def auto_backup(self):
-        """Automatic database backup"""
+        """Create a real SQLite backup of the bot database."""
         try:
-            backup_path = f"backups/backup_{datetime.now().strftime('%Y%m%d')}.json"
             os.makedirs("backups", exist_ok=True)
+            backup_path = os.path.join(
+                "backups",
+                f"bot_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+            )
+            source_path = getattr(self.db, "db_path", "bot_data.db")
 
-            # Implement your backup logic here
-            logger.info(f"Database backed up to {backup_path}")
+            if not os.path.exists(source_path):
+                logger.warning("Backup skipped: database file does not exist yet")
+                return
 
+            with sqlite3.connect(source_path) as source:
+                with sqlite3.connect(backup_path) as target:
+                    source.backup(target)
+
+            logger.info(f"✅ Database backup created: {backup_path}")
         except Exception as e:
-            logger.error(f"Backup failed: {e}")
+            logger.error(f"Backup failed: {e}", exc_info=True)
 
     async def close(self):
         """Cleanup on bot shutdown"""
