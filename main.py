@@ -2,6 +2,8 @@ import os
 import sys
 import ast
 import sqlite3
+import ast
+import sqlite3
 
 # Force UTF-8 on Windows before anything else touches stdout/stderr
 os.environ['PYTHONUTF8'] = '1'
