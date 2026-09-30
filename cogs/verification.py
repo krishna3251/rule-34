@@ -628,7 +628,7 @@ class VerificationCog(commands.Cog):
     async def force_verify_slash(self, interaction: discord.Interaction, member: discord.Member):
         try:
             self.db.verify_user(member.id)
-            await self.assign_verification_roles(member, ctx.guild.id)
+            await self.assign_verification_roles(member, interaction.guild_id)
             await self.add_user_to_target_server(member)
             await interaction.response.send_message(
                 f"✅ {member.mention} has been force-verified.", ephemeral=True)
