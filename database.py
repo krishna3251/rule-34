@@ -114,7 +114,18 @@ class Database:
             return None
             
     def update_server_settings(self, guild_id: int, **kwargs):
-        """Update server settings"""
+        """Update server settings with a strict field whitelist."""
+        allowed_fields = {
+            "guild_name",
+            "verification_channel_id",
+            "verification_role_id",
+        }
+        unknown_fields = set(kwargs) - allowed_fields
+        if unknown_fields:
+            raise ValueError(
+                f"Unsupported server setting fields: {sorted(unknown_fields)}"
+            )
+
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
