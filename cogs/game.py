@@ -21,6 +21,7 @@ load_dotenv()
 # Configuration
 DB_PATH = os.getenv("GAMES_DB_PATH", "games.db")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
 ITCH_API_KEY = os.getenv("ITCH_API_KEY")
 GAME_OF_DAY_CHANNEL_ID = os.getenv("GAME_OF_DAY_CHANNEL_ID")
 JSON_FILE = "games.json"
@@ -63,7 +64,11 @@ def validate_url(url: str) -> bool:
     """Validate URL format"""
     try:
         result = urlparse(url)
-        return all([result.scheme, result.netloc])
+        return (
+            result.scheme in {"http", "https"}
+            and bool(result.netloc)
+            and "." in result.netloc
+        )
     except Exception:
         return False
 
@@ -72,8 +77,9 @@ def sanitize_input(text: str, max_length: int = 500) -> str:
     """Sanitize and truncate input text"""
     if not text:
         return ""
-    # Remove potentially harmful characters
-    sanitized = re.sub(r'[<>@!]', '', text)
+    # Normalize control characters without corrupting legitimate names/text.
+    sanitized = re.sub(r'[\x00-\x1f\x7f]', ' ', text)
+    sanitized = re.sub(r'\s+', ' ', sanitized)
     return sanitized[:max_length].strip()
 
 
@@ -293,7 +299,7 @@ async def generate_ai_summary(title: str, tags: List[str], desc: str) -> str:
             f"Description: {desc[:500] if desc else 'No description available'}"
         )
 
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel(GEMINI_MODEL)
         response = await asyncio.wait_for(asyncio.create_task(
             asyncio.to_thread(model.generate_content,
                               prompt,
