@@ -142,6 +142,36 @@ rule-34/
 
 ---
 
+## 🔎 Unified Media Index
+
+Rule43 now has a modular source-adapter layer for cross-source discovery:
+
+| Media | Source | Adult metadata |
+|---|---|:---:|
+| 🔞 R34 | Rule34 DAPI | Yes |
+| 🎬 Anime | AniList GraphQL | Yes |
+| 📚 Manga | AniList GraphQL | Yes |
+| 🎮 Games | Itch adapter slot | Source-dependent |
+
+The unified search engine runs registered sources concurrently, normalizes their results into one model, records source failures independently, and deduplicates results.
+
+~~~text
+Discord /search
+      ↓
+SearchEngine
+      ├── Rule34 adapter
+      ├── AniList adapter
+      └── Itch adapter
+             ↓
+      normalized results
+             ↓
+        Discord response
+~~~
+
+For AniList, the adapter explicitly requests adult entries with its documented `isAdult` filter. AniList's public API supports both anime and manga through the same Media model.
+
+The Itch adapter intentionally does **not** attempt to bypass search/deindexing restrictions. If a legitimate public/official source becomes available, its adapter can be expanded without changing the Discord search layer.
+
 ## 🚀 Features
 
 ### 🔎 R34 Integration
