@@ -2,8 +2,6 @@ import os
 import sys
 import ast
 import sqlite3
-import ast
-import sqlite3
 
 # Force UTF-8 on Windows before anything else touches stdout/stderr
 os.environ['PYTHONUTF8'] = '1'
@@ -94,6 +92,7 @@ class Config:
 
     TOKEN = os.getenv("DISCORD_TOKEN")
     DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///bot.db")
+    INDEX_DB_PATH = os.getenv("INDEX_DB_PATH", "rule43_index.db")
     REDIS_URL = os.getenv("REDIS_URL")
 
     # Bot settings
@@ -614,6 +613,14 @@ class NatsuBot(commands.Bot):
                     source.backup(target)
 
             logger.info(f"✅ Database backup created: {backup_path}")
+
+            index_path = Config.INDEX_DB_PATH
+            if os.path.exists(index_path):
+                index_backup = os.path.join("backups", f"rule43_index_{datetime.now().strftime("%Y%m%d_%H%M%S")}.db")
+                with sqlite3.connect(index_path) as source:
+                    with sqlite3.connect(index_backup) as target:
+                        source.backup(target)
+                logger.info(f"✅ Local index backup created: {index_backup}")
         except Exception as e:
             logger.error(f"Backup failed: {e}", exc_info=True)
 
