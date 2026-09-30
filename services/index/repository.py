@@ -171,6 +171,24 @@ class LocalIndex:
                 url=excluded.url, similarity=excluded.similarity''',
                 (image_id, source, source_id, url, similarity))
 
+    def find_similar_images(self, phash: str, limit: int = 10, max_distance: int = 64) -> list[dict[str, Any]]:
+        def distance(a: str, b: str) -> int:
+            try:
+                return (int(a, 16) ^ int(b, 16)).bit_count()
+            except ValueError:
+                return 10**9
+        with self._connect() as conn:
+            rows = conn.execute('SELECT * FROM images WHERE phash IS NOT NULL').fetchall()
+        matches = []
+        for row in rows:
+            d = distance(phash, row['phash'])
+            if d <= max_distance:
+                item = dict(row)
+                item['distance'] = d
+                matches.append(item)
+        matches.sort(key=lambda item: item['distance'])
+        return matches[:max(1, limit)]
+
     def get_image_by_sha256(self, sha256: str) -> dict[str, Any] | None:
         with self._connect() as conn:
             row = conn.execute('SELECT * FROM images WHERE sha256=?', (sha256,)).fetchone()
