@@ -616,7 +616,7 @@ class NatsuBot(commands.Bot):
 
             index_path = Config.INDEX_DB_PATH
             if os.path.exists(index_path):
-                index_backup = os.path.join("backups", f"rule43_index_{datetime.now().strftime("%Y%m%d_%H%M%S")}.db")
+                index_backup = os.path.join("backups", f"rule43_index_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db")
                 with sqlite3.connect(index_path) as source:
                     with sqlite3.connect(index_backup) as target:
                         source.backup(target)
