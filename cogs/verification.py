@@ -1,3 +1,5 @@
+import os
+import secrets
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -7,7 +9,7 @@ import hashlib
 import time
 import random
 import string
-from datetime import datetime
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +22,8 @@ class VerificationCog(commands.Cog):
         self.pending_verifications = {}
         self.verification_attempts = {}
         self.rate_limits = {}
-        self.target_server_id = 1373276652796121210  # Target server ID for auto-addition
+        target_guild_id = os.getenv("VERIFICATION_TARGET_GUILD_ID", "0")
+        self.target_server_id = int(target_guild_id or 0) or None
 
         # Security configurations
         self.max_attempts_per_hour = 3
@@ -30,10 +33,7 @@ class VerificationCog(commands.Cog):
 
     def generate_verification_token(self, user_id):
         """Generate a unique verification token for enhanced security"""
-        timestamp = str(int(time.time()))
-        random_string = ''.join(random.choices(string.ascii_letters + string.digits, k=16))
-        token_data = f"{user_id}:{timestamp}:{random_string}"
-        return hashlib.sha256(token_data.encode()).hexdigest()[:16]
+        return secrets.token_urlsafe(18)
 
     def is_rate_limited(self, user_id):
         """Check if user is rate limited"""
@@ -57,7 +57,7 @@ class VerificationCog(commands.Cog):
 
     async def check_account_security(self, user):
         """Enhanced security checks for user account"""
-        current_time = datetime.utcnow()
+        current_time = datetime.now(timezone.utc)
         account_age = current_time - user.created_at
 
         security_issues = []
@@ -86,13 +86,14 @@ class VerificationCog(commands.Cog):
                 username=str(user),
                 success=success,
                 reason=reason,
-                timestamp=datetime.utcnow().isoformat(),
-                ip_hash=hashlib.sha256(str(user.id).encode()).hexdigest()[:16]  # Pseudo IP tracking
+                timestamp=datetime.now(timezone.utc).isoformat(),
+                ip_hash=None
             )
         except Exception as e:
             logger.error(f"Failed to log verification attempt: {e}")
 
     @commands.command(name='verify')
+    @commands.guild_only()
     @commands.cooldown(1, 30, commands.BucketType.user)  # 30 second cooldown per user
     async def verify_user(self, ctx):
         """Enhanced verification command with security measures"""
@@ -112,6 +113,14 @@ class VerificationCog(commands.Cog):
                 )
                 await ctx.send(embed=embed, delete_after=15)
                 await self.safe_delete_message(ctx.message, delay=15)
+                return
+
+            existing = self.pending_verifications.get(ctx.author.id)
+            if existing and time.time() - existing['timestamp'] <= self.verification_timeout:
+                await ctx.send(
+                    "⏳ You already have an active verification session. Please finish it first.",
+                    delete_after=10,
+                )
                 return
 
             # Check if already verified
@@ -166,11 +175,6 @@ class VerificationCog(commands.Cog):
                 inline=False
             )
             embed.add_field(
-                name="🔐 Security Token",
-                value=f"`{verification_token}`",
-                inline=False
-            )
-            embed.add_field(
                 name="⏱️ Time Limit",
                 value="You have 5 minutes to complete verification.",
                 inline=False
@@ -188,6 +192,7 @@ class VerificationCog(commands.Cog):
             try:
                 # Try to send DM first
                 dm_message = await ctx.author.send(embed=embed)
+                self.pending_verifications[ctx.author.id]['message_id'] = dm_message.id
                 await dm_message.add_reaction("✅")
                 await dm_message.add_reaction("❌")
 
@@ -205,6 +210,7 @@ class VerificationCog(commands.Cog):
                     inline=False
                 )
                 message = await ctx.send(embed=embed, delete_after=60)
+                self.pending_verifications[ctx.author.id]['message_id'] = message.id
                 await message.add_reaction("✅")
                 await message.add_reaction("❌")
                 await self.safe_delete_message(ctx.message, delay=60)
@@ -260,6 +266,10 @@ class VerificationCog(commands.Cog):
             if not reaction.message.embeds:
                 return
 
+            expected_message_id = verification_data.get('message_id')
+            if expected_message_id and reaction.message.id != expected_message_id:
+                return
+
             embed = reaction.message.embeds[0]
             if "Enhanced Age Verification Required" not in embed.title:
                 return
@@ -289,8 +299,8 @@ class VerificationCog(commands.Cog):
             # Add to target server
             await self.add_user_to_target_server(user)
 
-            # Add roles in all mutual servers
-            await self.assign_verification_roles(user)
+            # Add roles only in the guild where this verification began.
+            await self.assign_verification_roles(user, verification_data.get('guild_id'))
 
             # Clean up
             if user.id in self.pending_verifications:
@@ -355,6 +365,10 @@ class VerificationCog(commands.Cog):
     async def add_user_to_target_server(self, user):
         """Add verified user to the target server"""
         try:
+            if not self.target_server_id:
+                logger.info("Verification target guild is not configured; skipping invitation")
+                return
+
             target_guild = self.bot.get_guild(self.target_server_id)
             if not target_guild:
                 logger.error(f"Target server {self.target_server_id} not found")
@@ -410,35 +424,48 @@ class VerificationCog(commands.Cog):
         except Exception as e:
             logger.error(f"Error adding user to target server: {e}")
 
-    async def assign_verification_roles(self, user):
-        """Assign verification roles across all mutual guilds"""
+    async def assign_verification_roles(self, user, guild_id=None):
+        """Assign verification roles only in the originating guild."""
+        if not guild_id:
+            return
+
         try:
-            for guild in self.bot.guilds:
-                member = guild.get_member(user.id)
-                if not member:
-                    continue
+            guild = self.bot.get_guild(guild_id)
+            if not guild:
+                logger.warning(f"Verification guild {guild_id} is unavailable")
+                return
 
-                try:
-                    # Get server settings for verification role
-                    settings = self.db.get_server_settings(guild.id)
-                    verification_role_id = settings.get('verification_role_id')
+            member = guild.get_member(user.id)
+            if not member:
+                return
 
-                    if verification_role_id:
-                        role = guild.get_role(verification_role_id)
-                        if role and role not in member.roles:
-                            await member.add_roles(role, reason="Age verification completed")
-                            logger.info(f"Added verification role to {member} in {guild.name}")
+            try:
+                settings = self.db.get_server_settings(guild.id) or {}
+                verification_role_id = settings.get('verification_role_id')
 
-                    # Also try to find "Verified" role by name
-                    verified_role = discord.utils.get(guild.roles, name="Verified")
-                    if verified_role and verified_role not in member.roles:
-                        await member.add_roles(verified_role, reason="Age verification completed")
-                        logger.info(f"Added 'Verified' role to {member} in {guild.name}")
+                if verification_role_id:
+                    role = guild.get_role(verification_role_id)
+                    if role and role not in member.roles:
+                        await member.add_roles(role, reason="Age verification completed")
+                        logger.info(
+                            f"Added verification role to {member} in {guild.name}"
+                        )
 
-                except discord.Forbidden:
-                    logger.warning(f"Cannot add verification role in {guild.name}")
-                except Exception as e:
-                    logger.error(f"Error assigning roles in {guild.name}: {e}")
+                verified_role = discord.utils.get(guild.roles, name="Verified")
+                if verified_role and verified_role not in member.roles:
+                    await member.add_roles(
+                        verified_role, reason="Age verification completed"
+                    )
+                    logger.info(
+                        f"Added 'Verified' role to {member} in {guild.name}"
+                    )
+
+            except discord.Forbidden:
+                logger.warning(f"Cannot add verification role in {guild.name}")
+            except Exception as e:
+                logger.error(
+                    f"Error assigning verification role in {guild.name}: {e}"
+                )
 
         except Exception as e:
             logger.error(f"Error in assign_verification_roles: {e}")
@@ -518,7 +545,7 @@ class VerificationCog(commands.Cog):
         """Force verify a user (Admin only)"""
         try:
             self.db.verify_user(member.id)
-            await self.assign_verification_roles(member)
+            await self.assign_verification_roles(member, ctx.guild.id)
             await self.add_user_to_target_server(member)
 
             embed = discord.Embed(
@@ -540,6 +567,12 @@ class VerificationCog(commands.Cog):
     async def verify_slash(self, interaction: discord.Interaction):
         """Slash version of age verification"""
         try:
+            if interaction.guild_id is None:
+                await interaction.response.send_message(
+                    "❌ Verification can only be started inside a server.", ephemeral=True
+                )
+                return
+
             if self.is_rate_limited(interaction.user.id):
                 await interaction.response.send_message(
                     "🚫 You have exceeded the maximum verification attempts. Please wait 1 hour.",
@@ -574,8 +607,6 @@ class VerificationCog(commands.Cog):
                 title="🔞 Age Verification",
                 description="Click **Confirm** below to confirm you are 18+ and agree to server rules.",
                 color=discord.Color.orange())
-            embed.add_field(name="Token", value=f"`{token}`", inline=False)
-
             view = VerifyView(self, interaction.user)
             await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
@@ -597,7 +628,7 @@ class VerificationCog(commands.Cog):
     async def force_verify_slash(self, interaction: discord.Interaction, member: discord.Member):
         try:
             self.db.verify_user(member.id)
-            await self.assign_verification_roles(member)
+            await self.assign_verification_roles(member, ctx.guild.id)
             await self.add_user_to_target_server(member)
             await interaction.response.send_message(
                 f"✅ {member.mention} has been force-verified.", ephemeral=True)
@@ -628,7 +659,7 @@ class VerifyView(discord.ui.View):
 
         self.cog.db.verify_user(self.user.id)
         await self.cog.log_verification_attempt(self.user, True, "Slash verified")
-        await self.cog.assign_verification_roles(self.user)
+        await self.cog.assign_verification_roles(self.user, data.get('guild_id'))
         await self.cog.add_user_to_target_server(self.user)
         self.cog.pending_verifications.pop(self.user.id, None)
 
