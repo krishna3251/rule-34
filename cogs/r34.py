@@ -267,7 +267,40 @@ class NSFWContent(commands.Cog):
         """Furry content"""
         await self._send_post(ctx, "rating:explicit furry")
 
-    @commands.command(name='r34help')
+    @commands.command(name="trending")
+    async def trending_prefix(self, ctx):
+        """Show the current in-memory trending search tags."""
+        if not self.trending:
+            await ctx.send("📉 No trending data yet.")
+            return
+        e = discord.Embed(title="🔥 Trending", color=0xff0000)
+        for i, (tag, cnt) in enumerate(self.trending.most_common(6), 1):
+            medal = ['🥇', '🥈', '🥉'][i - 1] if i <= 3 else f'{i}.'
+            e.add_field(name=f"{medal} {tag}", value=f"**{cnt}** searches", inline=True)
+        await ctx.send(embed=e)
+
+    @commands.command(name="fav")
+    async def fav_prefix(self, ctx, action: str = "view"):
+        """View or clear your saved favorites."""
+        action = action.casefold().strip()
+        uid = ctx.author.id
+        if action not in {"view", "clear"}:
+            await ctx.send("Use ~fav view or ~fav clear.")
+            return
+        if action == "view":
+            if not self.favs[uid]:
+                await ctx.send("❌ No favorites saved.")
+                return
+            e = discord.Embed(title="⭐ Your Favorites", color=0xffcc00)
+            for i, url in enumerate(self.favs[uid][:6], 1):
+                e.add_field(name=f"#{i}", value=f"[View]({url})", inline=True)
+            await ctx.send(embed=e)
+            return
+        cnt = len(self.favs[uid])
+        self.favs[uid].clear()
+        await ctx.send(f"🗑️ Cleared {cnt} favorites.")
+
+    @commands.command(name="r34help")
     async def help_cmd(self, ctx):
         """Help command"""
         e = discord.Embed(title="🔞 NSFW Bot Commands", color=0x8B00FF)
@@ -280,13 +313,13 @@ class NSFWContent(commands.Cog):
         ]
 
         prefix_cmds = [
-            "`!r34 [tags]` - Search",
-            "`!r34random` - Random",
-            "`!r34girl` - Girl content",
-            "`!r34anime` - Anime",
-            "`!r34milf` - MILF",
-            "`!r34hentai` - Hentai",
-            "`!r34furry` - Furry"
+            "`miko!r34 [tags]` / `~r34 [tags]` - Search",
+            "`miko!r34random` / `~r34random` - Random",
+            "`miko!r34girl` / `~r34girl` - Girl content",
+            "`miko!r34anime` / `~r34anime` - Anime",
+            "`miko!r34milf` / `~r34milf` - MILF",
+            "`miko!r34hentai` / `~r34hentai` - Hentai",
+            "`miko!r34furry` / `~r34furry` - Furry"
         ]
 
         e.add_field(name="Slash Commands", value="\n".join(slash_cmds), inline=False)
