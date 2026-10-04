@@ -242,3 +242,69 @@ class MikoGate:
 
     def release_ai_slot(self) -> None:
         self.ai_semaphore.release()
+
+    async def check_direct(
+        self,
+        message: Any,
+        prompt: str,
+        *,
+        admin_level: int = 1,
+        user_level_cap: int = 2,
+    ) -> GateDecision:
+        """Run the same safety, level, quota and cooldown checks for /askmiko."""
+
+        text = str(prompt or "").strip()[:4000]
+        if not text:
+            return GateDecision(False, reason="empty_prompt")
+
+        safety_reason = self._precheck(text)
+        if safety_reason == "minor_related":
+            level = 0
+            mood = "serious"
+            final_prompt = (
+                "The user raised a minor-related topic. Refuse unsafe framing "
+                "and answer briefly and cleanly."
+            )
+        elif safety_reason in {"jailbreak", "explicit_request"}:
+            level = 0
+            mood = "serious"
+            final_prompt = (
+                f"{text}\n"
+                "Refuse the request for disallowed explicit or unrestricted content. "
+                "Stay clean, brief and in character."
+            )
+        else:
+            level = max(0, min(2, int(admin_level)))
+            channel = getattr(message, "channel", None)
+            if level >= 2 and not bool(getattr(channel, "is_nsfw", lambda: False)()):
+                level = 1
+            level = min(level, max(0, min(2, int(user_level_cap))))
+            mood = self._mood_for(text)
+            if mood in {"serious", "concerned"}:
+                level = 0
+            final_prompt = text
+
+        now = time.monotonic()
+        user_id = message.author.id
+        channel_id = message.channel.id
+
+        if now - self.last_user.get(user_id, 0.0) < self.USER_COOLDOWN:
+            return GateDecision(False, reason="user_cooldown")
+        if now - self.last_channel.get(channel_id, 0.0) < self.CHANNEL_COOLDOWN:
+            return GateDecision(False, reason="channel_cooldown")
+
+        self._reset_daily_quota_if_needed()
+        if self._daily_requests >= self.DAILY_QUOTA:
+            return GateDecision(False, reason="daily_quota")
+
+        self.last_user[user_id] = now
+        self.last_channel[channel_id] = now
+        self._daily_requests += 1
+
+        return GateDecision(
+            True,
+            prompt=final_prompt,
+            reason=safety_reason or "direct",
+            spice_level=level,
+            mood=mood,
+        )
