@@ -49,11 +49,14 @@ class RepositorySmokeTests(unittest.TestCase):
 
     def test_miko_provider_stack(self):
         source = (ROOT / "services/miko_ai.py").read_text(encoding="utf-8")
+        orchestrator = (ROOT / "services/miko_orchestrator.py").read_text(encoding="utf-8")
         self.assertIn("OPENROUTER_API_KEY", source)
         self.assertIn("OpenRouter", source)
         self.assertIn("using Groq backup", source)
         self.assertIn("GROQ_API_KEY", source)
         self.assertIn("openrouter:web_search", source)
+        self.assertIn("def provider(self) -> str:", orchestrator)
+        self.assertIn("return self.ai.provider", orchestrator)
 
     def test_miko_agent_tools_exist(self):
         source = (ROOT / "services/miko_tools.py").read_text(encoding="utf-8")
