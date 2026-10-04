@@ -374,6 +374,61 @@ class Rule34DebugCog(commands.Cog):
         embed.set_footer(text=f"Post ID: {post.get('id', '?')} | {len(results)} results found")
         await interaction.followup.send(embed=embed)
 
+    @app_commands.command(name="r34debug", description="Debug Rule34 search across mirrors (NSFW only)")
+    @app_commands.describe(tags="Tags to search for")
+    async def r34debug_slash(self, interaction: discord.Interaction, tags: str = ""):
+        if not getattr(interaction.channel, "nsfw", False):
+            await interaction.response.send_message("❌ NSFW channels only!", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        results = await self.debug_all_mirrors(tags or "rating:explicit", limit=10)
+        if results:
+            post = random.choice(results)
+            embed = discord.Embed(title="✅ Debug Search Successful", color=0x00FF00)
+            embed.add_field(name="Posts Found", value=str(len(results)), inline=True)
+            embed.add_field(name="Selected Post ID", value=str(post.get("id", "N/A")), inline=True)
+            embed.add_field(name="Has File URL", value="✅ Yes" if post.get("file_url") else "❌ No", inline=True)
+            if post.get("file_url"):
+                embed.set_image(url=post["file_url"])
+        else:
+            embed = discord.Embed(title="❌ Debug Search Failed", description="No posts found from any mirror. Check `r34debug.log`.", color=0xFF0000)
+        await interaction.followup.send(embed=embed)
+
+    @app_commands.command(name="r34debugraw", description="Show a raw Rule34 mirror response (NSFW only)")
+    @app_commands.describe(mirror_index="Mirror number", tags="Optional tags")
+    async def r34debugraw_slash(self, interaction: discord.Interaction, mirror_index: int = 1, tags: str = ""):
+        if not getattr(interaction.channel, "nsfw", False):
+            await interaction.response.send_message("❌ NSFW channels only!", ephemeral=True)
+            return
+        if mirror_index < 1 or mirror_index > len(self.api_mirrors):
+            await interaction.response.send_message(f"❌ Mirror must be 1-{len(self.api_mirrors)}", ephemeral=True)
+            return
+        mirror = self.api_mirrors[mirror_index - 1]
+        await interaction.response.defer(ephemeral=True)
+        params = mirror["params_template"].copy()
+        if mirror["name"] == "E621":
+            params.update({"limit": 5, "tags": tags})
+        else:
+            params.update({"tags": tags or "rating:explicit", "limit": 5})
+        try:
+            async with self.session.get(mirror["url"], params=params) as response:
+                response_text = await response.text()
+                preview = response_text[:1200] + ("\n... [truncated]" if len(response_text) > 1200 else "")
+                embed = discord.Embed(title=f"🔍 Raw Response: {mirror['name']}", color=0x9B59B6)
+                embed.add_field(name="URL", value=mirror["url"], inline=False)
+                embed.add_field(name="Status", value=str(response.status), inline=True)
+                embed.add_field(name="Content Type", value=response.headers.get("content-type", "unknown"), inline=True)
+                embed.add_field(name="Preview", value=f"```json\n{preview}\n```"[:1024], inline=False)
+                await interaction.followup.send(embed=embed)
+        except Exception as exc:
+            await interaction.followup.send(f"❌ Error getting raw response: {exc}")
+
+    @app_commands.command(name="r34debughelp", description="Show Rule34 debug command help")
+    async def r34debughelp_slash(self, interaction: discord.Interaction):
+        embed = discord.Embed(title="🔧 Rule34 Debug Commands", color=0x1ABC9C)
+        embed.add_field(name="Commands", value="`/r34debug [tags]`\n`/r34debugraw <mirror> [tags]`\n`/r34mirrors`\n`/r34debughelp`", inline=False)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
     @app_commands.command(name="r34mirrors", description="List available Rule34 API mirrors")
     async def r34mirrors_slash(self, interaction: discord.Interaction):
         embed = discord.Embed(title="🌐 Available API Mirrors", color=0x3498DB)
