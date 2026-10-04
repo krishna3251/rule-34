@@ -224,8 +224,8 @@ class MikoChat(commands.Cog):
         await ctx.send(
             "Miko Chat\n"
             f"Auto-chat: {channel.mention if channel else 'Not configured'}\n"
-            f"AI: {'Groq connected' if self.orchestrator.ai_ready else 'Groq not configured'}\n"
-            f"Model: {self.orchestrator.model}\n"
+            f"AI: {'connected' if self.orchestrator.ai_ready else 'not configured'}\n"
+            f"Primary: {self.orchestrator.provider} / {self.orchestrator.model}\n"
             f"Live web: {'enabled' if self.orchestrator.web_search_ready else 'unavailable'}\n"
             f"Agent tools: {len(self.orchestrator.tool_names)}\n"
             "Memory: 30 min / last 10 messages\n"
