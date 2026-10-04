@@ -254,70 +254,81 @@ The bot also includes operational tooling for hosted deployments:
 
 ## 🌸 Miko AI Chat Architecture
 
-Rule43 includes a modular Miko conversational system built around a Rukiya-style orchestration pattern.
+Rule43 uses a single Rukiya-style **Miko Chat Engine** for conversational requests. The Discord cog is only the platform adapter; the engine owns the complete chat lifecycle.
 
 ~~~text
-Discord Message
-      |
-      v
-MikoChat Cog
-      |
-      v
-Miko Orchestrator
-      |
-      v
-Gatekeeper
-  ├── bot / command filtering
-  ├── Miko trigger detection
-  ├── rate limiting
-  └── safety pre-check
-      |
-      v
-Memory Manager
-  ├── user memory
-  └── guild/channel conversation memory
-      |
-      v
-Context Builder
-  ├── personality
-  ├── mood
-  ├── intent
-  ├── channel level
-  └── recent memory
-      |
-      v
-OpenRouter Agent (primary)
-  ├── natural-language understanding
-  ├── live web search via openrouter:web_search
-  └── guarded Discord command tools
-      |
-      └── Groq Agent (backup)
-          ├── natural-language understanding
-          ├── live browser search
-          └── guarded Discord command tools
-      |
-      v
-Local Tool Loop
-  ├── inspect real bot commands
-  ├── execute allowed commands with Discord checks
-  └── return tool results to Groq
-      |
-      v
-Response Processor
-  ├── output validation
-  ├── prompt-leak check
-  ├── level validation
-  ├── length / formatting checks
-  └── retry / fallback
-      |
-      v
-Memory Write
-      |
-      v
-Discord Response
+Discord Message / ~askmiko / /askmiko
+                |
+                v
+          Miko Chat Engine
+                |
+                v
+         Gatekeeper / Shani
+                |
+                v
+        Decision Engine
+   ┌────────────┼────────────┐
+   |            |            |
+   v            v            v
+ intent      priority     response mode
+   |            |            |
+   └────────────┼────────────┘
+                |
+                v
+             Memory
+       ┌────────┴────────┐
+       |                 |
+   user scope       channel scope
+       |                 |
+       └────────┬────────┘
+                v
+          Context Builder
+       personality + profile
+       mood + social state
+       games + recent history
+                |
+        ┌───────┴────────┐
+        v                v
+      Tools          AI Provider
+                         |
+                 OpenRouter primary
+                    Groq fallback
+                         |
+                         v
+                 Response Processor
+            safety / leak / repeat checks
+                         |
+                         v
+                    Memory Write
+                         |
+                         v
+                    Discord Reply
 ~~~
 
-The Discord cog is intentionally kept as an adapter. The Orchestrator coordinates the pipeline, while Gatekeeper, Memory, Context, AI, Personality, Routing, Profile, and Response Processing remain separate services.
+The **Decision Engine** is separate from generation. It decides whether the request is chat, search, coding, gaming, help, support, goodbye, or an action, along with priority, response mode, memory scope, search permission, and whether action tools may execute.
+
+All normal messages, explicit summons, and direct `~askmiko` / `/askmiko` questions now enter the same conversational pipeline. This prevents direct-question commands from bypassing the normal safety, memory, decision, tool and response-validation layers.
+
+The engine is implemented in:
+
+~~~text
+services/
+├── miko_chat_engine.py      # Single conversational runtime
+├── miko_decision.py         # Rukiya-style application decisions
+├── miko_gate.py             # Trigger, safety, limits and quota
+├── miko_memory.py           # User + channel conversation memory
+├── miko_context.py          # Final prompt/context assembly
+├── miko_personality.py      # Miko personality rules
+├── miko_social.py           # Adaptive social behavior
+├── miko_router.py           # Lightweight intent hints
+├── miko_ai.py               # OpenRouter + Groq provider layer
+├── miko_tools.py            # Guarded Discord tools
+├── miko_response.py         # Output validation
+├── miko_profile.py          # User preferences
+└── miko_emotion.py          # Emotion selection
+~~~
+
+`services/miko_orchestrator.py` remains as a compatibility alias so existing imports continue to work while `MikoChatEngine` is the actual runtime.
 
 ### Miko Configuration
 
