@@ -10,11 +10,12 @@ logger = logging.getLogger("discord_bot")
 
 
 class MikoMemory:
-    """Rukiya-style dual-scope memory: per-user history plus shared channel context."""
+    """Rukiya-style dual-scope memory: user continuity plus shared channel context."""
 
     MEMORY_DURATION = 45 * 60
     MAX_USER_MESSAGES = 12
     MAX_CHANNEL_MESSAGES = 24
+    MAX_CONTEXT_MESSAGES = 24
     MAX_CONTENT_LENGTH = 1200
 
     def __init__(self, path: str | Path = "data/miko_memory.json") -> None:
@@ -125,13 +126,24 @@ class MikoMemory:
     ) -> list[dict[str, str]]:
         self._prune_expired(save=False)
 
+        channel_items: list[dict[str, Any]] = []
+        user_items: list[dict[str, Any]] = []
+
         if channel_id is not None:
             bucket = self.conversations.get(self.conversation_key(guild_id, channel_id))
-            if bucket and bucket.get("messages"):
-                return list(bucket["messages"][-self.MAX_CHANNEL_MESSAGES :])
+            if bucket:
+                channel_items = list(bucket.get("messages", []))
 
-        bucket = self.users.get(str(user_id), {})
-        return list(bucket.get("messages", [])[-self.MAX_USER_MESSAGES :])
+        bucket = self.users.get(str(user_id))
+        if bucket:
+            user_items = list(bucket.get("messages", []))
+
+        combined = channel_items + [
+            item for item in user_items
+            if item not in channel_items
+        ]
+        combined.sort(key=lambda item: float(item.get("time", 0) or 0))
+        return combined[-self.MAX_CONTEXT_MESSAGES :]
 
     def reset(
         self,
@@ -142,8 +154,7 @@ class MikoMemory:
         self.users.pop(str(user_id), None)
 
         if channel_id is not None:
-            key = self.conversation_key(guild_id, channel_id)
-            bucket = self.conversations.get(key)
+            bucket = self.conversations.get(self.conversation_key(guild_id, channel_id))
             if bucket:
                 bucket["messages"] = [
                     msg for msg in bucket.get("messages", [])
@@ -151,11 +162,10 @@ class MikoMemory:
                 ]
                 bucket["timestamp"] = time.time()
         else:
-            suffix = str(user_id)
             for bucket in self.conversations.values():
                 bucket["messages"] = [
                     msg for msg in bucket.get("messages", [])
-                    if str(msg.get("user_id", "")) != suffix
+                    if int(msg.get("user_id", -1)) != int(user_id)
                 ]
 
         self.save()
