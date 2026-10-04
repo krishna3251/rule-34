@@ -118,7 +118,7 @@ class MikoDecisionEngine:
 
         # Action tools are only useful when the user explicitly summoned Miko
         # for an action. Read-only tools remain available to answer questions.
-        allow_actions = gate.reason in {"summoned", "direct"} and intent == "action"
+        allow_actions = gate.reason == "summoned" and intent == "action"
 
         return MikoDecision(
             respond=True,
