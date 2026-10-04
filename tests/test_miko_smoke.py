@@ -62,6 +62,9 @@ class RepositorySmokeTests(unittest.TestCase):
         self.assertIn("from services.miko_chat_engine import MikoChatEngine", cog)
         self.assertIn("self.chat_engine.handle", cog)
         self.assertIn("self.chat_engine.ask_direct", cog)
+        self.assertNotIn("MikoOrchestrator()", cog)
+        orchestrator = (ROOT / "services/miko_orchestrator.py").read_text(encoding="utf-8")
+        self.assertIn("class MikoOrchestrator(MikoChatEngine)", orchestrator)
 
     def test_miko_provider_stack(self):
         source = (ROOT / "services/miko_ai.py").read_text(encoding="utf-8")
