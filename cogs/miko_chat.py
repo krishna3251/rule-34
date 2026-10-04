@@ -14,7 +14,7 @@ logger = logging.getLogger("discord_bot")
 
 
 class MikoChat(commands.Cog):
-    """Discord adapter for the Miko orchestration system."""
+    """Thin Discord adapter for the single Miko Chat Engine."""
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
