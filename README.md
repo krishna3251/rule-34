@@ -286,12 +286,22 @@ Context Builder
   └── recent memory
       |
       v
-Groq AI Service
+Groq Agent
+  ├── natural-language understanding
+  ├── built-in live browser search
+  └── guarded Discord command tools
+      |
+      v
+Local Tool Loop
+  ├── inspect real bot commands
+  ├── execute allowed commands with Discord checks
+  └── return tool results to Groq
       |
       v
 Response Processor
   ├── output validation
   ├── prompt-leak check
+  ├── level validation
   ├── length / formatting checks
   └── retry / fallback
       |
@@ -331,6 +341,10 @@ miko!mikochatinfo
 
 Level 2 is restricted to age-restricted Discord channels and remains non-explicit. The system also supports user memory reset/forget controls and lightweight safety checks before and after AI generation.
 
+Miko can also understand natural-language requests and, when explicitly summoned, use an existing user-facing bot command instead of forcing the user to remember exact syntax. The command tool uses the real Discord command checks and permissions, while developer/owner/system commands are blocked from AI execution.
+
+Groq's GPT-OSS models support built-in browser search, so Miko can use live web information for current news, prices, releases, availability and other time-sensitive questions without a separate search API. The configured default model, <code>openai/gpt-oss-20b</code>, supports this capability.
+
 ### Miko Environment
 
 ~~~text
@@ -341,6 +355,9 @@ MIKO_USER_COOLDOWN=1.0
 MIKO_CHANNEL_COOLDOWN=0.35
 MIKO_AI_CONCURRENCY=3
 MIKO_DAILY_QUOTA=450
+MIKO_WEB_SEARCH=true
+MIKO_MAX_TOOL_ITERATIONS=3
+MIKO_MAX_TOOL_CALLS=3
 ~~~
 
 The Miko services live under:
@@ -354,6 +371,7 @@ services/
 ├── miko_personality.py
 ├── miko_router.py
 ├── miko_ai.py
+├── miko_tools.py
 ├── miko_response.py
 └── miko_profile.py
 ~~~
