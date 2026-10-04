@@ -5,7 +5,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from services.miko_decision import MikoDecisionEngine
 from services.miko_games import MikoGameCatalog
+from services.miko_gate import GateDecision
 from services.miko_memory import MikoMemory
 from services.miko_social import MikoSocialEngine
 
@@ -52,6 +54,46 @@ class MikoEnhancementTests(unittest.TestCase):
             temp = engine.temperature(intent, "playful", 3)
             self.assertGreaterEqual(temp, 0.45)
             self.assertLessEqual(temp, 1.05)
+
+    def test_rukiya_style_decision_layer(self) -> None:
+        engine = MikoDecisionEngine()
+
+        decision = engine.decide(
+            GateDecision(
+                True,
+                prompt="miko, what is the latest Minecraft update?",
+                reason="summoned",
+                spice_level=1,
+                mood="playful",
+            ),
+            auto_chat=False,
+            profile={"level_cap": 2},
+        )
+
+        self.assertTrue(decision.respond)
+        self.assertEqual(decision.intent, "gaming")
+        self.assertEqual(decision.priority, "high")
+        self.assertEqual(decision.response_mode, "gaming")
+        self.assertEqual(decision.memory_scope, "user+channel")
+        self.assertFalse(decision.allow_actions)
+
+    def test_safety_decision_forces_clean_mode(self) -> None:
+        engine = MikoDecisionEngine()
+        decision = engine.decide(
+            GateDecision(
+                True,
+                prompt="Refuse the request for disallowed explicit content.",
+                reason="explicit_request",
+                spice_level=2,
+                mood="serious",
+            ),
+            profile={"level_cap": 2},
+        )
+        self.assertTrue(decision.strict)
+        self.assertEqual(decision.spice_level, 0)
+        self.assertEqual(decision.response_mode, "safety_refusal")
+        self.assertFalse(decision.web_search)
+        self.assertFalse(decision.allow_actions)
 
     def test_social_prompt_varies_across_turns(self) -> None:
         engine = MikoSocialEngine()
