@@ -99,8 +99,38 @@ class MikoChat(commands.Cog):
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
+        if message.author.bot:
+            return
+
+        auto_chat = (
+            bool(message.guild)
+            and self.chat_channels.get(message.guild.id) == message.channel.id
+        )
+        channel_id = message.channel.id
+        disabled = channel_id in self.disabled_channels
+        quiet = channel_id in self.quiet_channels
+
+        candidate = await self.orchestrator.is_candidate(
+            message,
+            self.bot,
+            auto_chat=auto_chat,
+            quiet=quiet,
+        )
+        if disabled or not candidate:
+            return
+
         async with message.channel.typing():
-            await self._handle_message(message)
+            result = await self.orchestrator.handle(
+                message,
+                self.bot,
+                auto_chat=auto_chat,
+                admin_level=self.channel_levels.get(channel_id, 1),
+                disabled=disabled,
+                quiet=quiet,
+            )
+
+        if result.replied and result.text:
+            await message.reply(result.text, mention_author=False)
 
     @commands.command(name="mikosetchat")
     @commands.has_permissions(administrator=True)
