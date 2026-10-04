@@ -96,7 +96,7 @@ class Config:
     REDIS_URL = os.getenv("REDIS_URL")
 
     # Bot settings
-    PREFIX = commands.when_mentioned_or("n ", "n!", "natsu ", "N ")
+    PREFIX = commands.when_mentioned_or("miko ", "miko!", "~")
     OWNER_IDS = [
         int(id_) for id_ in os.getenv("OWNER_IDS", "").split(",") if id_
     ]
@@ -223,7 +223,7 @@ class Analytics:
 
 
 # === Enhanced Bot Class ===
-class NatsuBot(commands.Bot):
+class MikoBot(commands.Bot):
     """Enhanced Discord bot with advanced features"""
 
     def __init__(self):
@@ -273,7 +273,7 @@ class NatsuBot(commands.Bot):
 
     async def setup_hook(self):
         """Initialize bot components during startup"""
-        logger.info("Setting up bot components...")
+        logger.info("Setting up Miko components...")
 
         # Create aiohttp session
         self.session = aiohttp.ClientSession()
@@ -664,7 +664,7 @@ class NatsuBot(commands.Bot):
 
 # === Initialize Bot ===
 Config.validate()
-bot = NatsuBot()
+bot = MikoBot()
 
 
 # === Core Commands ===
@@ -900,7 +900,7 @@ async def help_slash(interaction: discord.Interaction):
 # === Run Bot ===
 if __name__ == "__main__":
     try:
-        logger.info("🚀 Starting NatsuBot...")
+        logger.info("🚀 Starting Miko...")
         if Config.TOKEN:
             bot.run(Config.TOKEN,
                     log_handler=None)  # We handle logging ourselves
