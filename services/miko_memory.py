@@ -10,7 +10,7 @@ logger = logging.getLogger("discord_bot")
 
 
 class MikoMemory:
-    """Rukiya-style dual-scope memory: per-user profile history + shared channel thread."""
+    """Rukiya-style dual-scope memory: per-user history plus shared channel context."""
 
     MEMORY_DURATION = 45 * 60
     MAX_USER_MESSAGES = 12
@@ -64,21 +64,15 @@ class MikoMemory:
                 return False
 
         self.users = {
-            key: value
-            for key, value in self.users.items()
+            key: value for key, value in self.users.items()
             if isinstance(value, dict) and valid(value)
         }
         self.conversations = {
-            key: value
-            for key, value in self.conversations.items()
+            key: value for key, value in self.conversations.items()
             if isinstance(value, dict) and valid(value)
         }
         if save:
             self.save()
-
-    @staticmethod
-    def user_key(user_id: int) -> str:
-        return str(user_id)
 
     @staticmethod
     def conversation_key(guild_id: int | None, channel_id: int) -> str:
@@ -98,12 +92,12 @@ class MikoMemory:
             "role": "assistant" if role in {"assistant", "model"} else "user",
             "content": str(content)[: self.MAX_CONTENT_LENGTH],
             "name": str(name or "").strip()[:80],
+            "user_id": int(user_id),
             "time": now,
         }
 
-        ukey = self.user_key(user_id)
         user_bucket = self.users.setdefault(
-            ukey,
+            str(user_id),
             {"messages": [], "timestamp": now},
         )
         user_bucket["timestamp"] = now
@@ -111,9 +105,9 @@ class MikoMemory:
         user_bucket["messages"] = user_bucket["messages"][-self.MAX_USER_MESSAGES :]
 
         if channel_id is not None:
-            ckey = self.conversation_key(guild_id, channel_id)
+            key = self.conversation_key(guild_id, channel_id)
             channel_bucket = self.conversations.setdefault(
-                ckey,
+                key,
                 {"messages": [], "timestamp": now},
             )
             channel_bucket["timestamp"] = now
@@ -132,13 +126,11 @@ class MikoMemory:
         self._prune_expired(save=False)
 
         if channel_id is not None:
-            bucket = self.conversations.get(
-                self.conversation_key(guild_id, channel_id)
-            )
+            bucket = self.conversations.get(self.conversation_key(guild_id, channel_id))
             if bucket and bucket.get("messages"):
                 return list(bucket["messages"][-self.MAX_CHANNEL_MESSAGES :])
 
-        bucket = self.users.get(self.user_key(user_id), {})
+        bucket = self.users.get(str(user_id), {})
         return list(bucket.get("messages", [])[-self.MAX_USER_MESSAGES :])
 
     def reset(
@@ -147,18 +139,25 @@ class MikoMemory:
         guild_id: int | None = None,
         channel_id: int | None = None,
     ) -> None:
-        self.users.pop(self.user_key(user_id), None)
+        self.users.pop(str(user_id), None)
+
         if channel_id is not None:
-            bucket = self.conversations.get(self.conversation_key(guild_id, channel_id))
+            key = self.conversation_key(guild_id, channel_id)
+            bucket = self.conversations.get(key)
             if bucket:
                 bucket["messages"] = [
                     msg for msg in bucket.get("messages", [])
-                    if str(msg.get("name", "")) != str(user_id)
+                    if int(msg.get("user_id", -1)) != int(user_id)
                 ]
                 bucket["timestamp"] = time.time()
         else:
-            self.save()
-            return
+            suffix = str(user_id)
+            for bucket in self.conversations.values():
+                bucket["messages"] = [
+                    msg for msg in bucket.get("messages", [])
+                    if str(msg.get("user_id", "")) != suffix
+                ]
+
         self.save()
 
     def clear_channel(self, guild_id: int | None, channel_id: int) -> None:
