@@ -66,6 +66,13 @@ class MikoGate:
                 if token in content:
                     return content.replace(token, "").strip(), True
 
+        reference = getattr(message, "reference", None)
+        resolved = getattr(reference, "resolved", None)
+        if bot.user and resolved is not None:
+            resolved_author = getattr(resolved, "author", None)
+            if getattr(resolved_author, "id", None) == bot.user.id:
+                return content, True
+
         lowered = content.casefold()
         if lowered == "miko":
             return "", True
