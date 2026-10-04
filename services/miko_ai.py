@@ -143,8 +143,12 @@ class MikoAI:
             "messages": request_messages,
             "temperature": 0.82 if not strict else 0.5,
             "max_completion_tokens": 400,
-            "reasoning_effort": "low",
+            "reasoning_effort": os.getenv(
+                "MIKO_REASONING_EFFORT",
+                "low",
+            ),
             "include_reasoning": False,
+            "citation_options": "enabled",
         }
 
         if tools:
