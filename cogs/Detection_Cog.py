@@ -591,6 +591,73 @@ class CloudflareCheckerCog(commands.Cog):
         embed.set_footer(text=f"Tested {len(results)} sites | {len(clear)} clear, {len(blocked)} blocked")
         await interaction.followup.send(embed=embed)
 
+    @app_commands.command(name="cfdetail", description="Show detailed Cloudflare/CAPTCHA analysis for one site")
+    @app_commands.describe(site_name="Optional site name to inspect")
+    async def cfdetail_slash(self, interaction: discord.Interaction, site_name: str = ""):
+        if not site_name.strip():
+            site_names = [site["name"] for site in self.test_sites]
+            embed = discord.Embed(title="🔍 Available Sites", color=0x9B59B6)
+            embed.description = "Use `/cfdetail site_name` with one of these:\n\n" + "\n".join(f"• {name}" for name in site_names)
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+
+        target_site = next((site for site in self.test_sites if site_name.casefold() in site["name"].casefold()), None)
+        if not target_site:
+            await interaction.response.send_message(
+                embed=discord.Embed(title="❌ Site Not Found", description=f"'{site_name}' not found in test sites.", color=0xE74C3C),
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True)
+        result = await self.test_site(target_site)
+        embed = discord.Embed(title=f"🔍 Detailed Analysis: {result['site_name']}", color=0x3498DB)
+        embed.add_field(name="🌐 URL", value=result["url"], inline=False)
+        embed.add_field(name="📊 Status", value=f"{result.get('status_code', 'Unknown')} - {result['severity']}", inline=True)
+        embed.add_field(name="📄 Content Type", value=result.get("content_type", "Unknown"), inline=True)
+        embed.add_field(name="📏 Response Size", value=f"{result.get('response_length', 0)} chars", inline=True)
+        if result.get("issues"):
+            issues_text = []
+            for issue in result["issues"]:
+                category = issue["category"].replace("_", " ").title()
+                matches = ", ".join(issue["matches"][:3])
+                issues_text.append(f"**{category}**: {matches}")
+            embed.add_field(name="⚠️ Detected Issues", value="\n".join(issues_text)[:1024], inline=False)
+        else:
+            embed.add_field(name="✅ Status", value="No blocking issues detected", inline=False)
+        await interaction.followup.send(embed=embed)
+
+    @app_commands.command(name="cftest", description="Test a custom URL for Cloudflare/CAPTCHA")
+    @app_commands.describe(url="URL to test")
+    async def cftest_slash(self, interaction: discord.Interaction, url: str):
+        if not url.strip():
+            await interaction.response.send_message("❌ Please provide a URL.", ephemeral=True)
+            return
+        if not url.startswith(("http://", "https://")):
+            url = "https://" + url
+        custom_site = {"name": "Custom Test", "url": url, "api": False}
+        await interaction.response.defer(ephemeral=True)
+        result = await self.test_site(custom_site)
+        embed = discord.Embed(title="🧪 Custom URL Test", color=0xF39C12)
+        embed.add_field(name="🌐 URL", value=result["url"], inline=False)
+        embed.add_field(name="📊 Result", value=result["severity"], inline=True)
+        embed.add_field(name="🔢 Status Code", value=str(result.get("status_code", "Unknown")), inline=True)
+        embed.add_field(name="📄 Content Type", value=result.get("content_type", "Unknown"), inline=True)
+        if result.get("issues"):
+            issues_summary = [issue["category"].replace("_", " ").title() for issue in result["issues"]]
+            embed.add_field(name="⚠️ Issues Found", value=", ".join(dict.fromkeys(issues_summary))[:1024], inline=False)
+        await interaction.followup.send(embed=embed)
+
+    @app_commands.command(name="cfhelp", description="Show Cloudflare/CAPTCHA checker help")
+    async def cfhelp_slash(self, interaction: discord.Interaction):
+        embed = discord.Embed(title="🛡️ Cloudflare & CAPTCHA Checker", color=0x1ABC9C)
+        embed.add_field(
+            name="Commands",
+            value="`/cfcheck` full check\n`/cfstatus` last result\n`/cfdetail` site details\n`/cftest` custom URL\n`/cfhelp` this help",
+            inline=False,
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
     @app_commands.command(name="cfstatus", description="Show current CF status from last check")
     async def cfstatus_slash(self, interaction: discord.Interaction):
         if not self.site_status:
