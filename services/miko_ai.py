@@ -148,7 +148,6 @@ class MikoAI:
                 "low",
             ),
             "include_reasoning": False,
-            "citation_options": "enabled",
         }
 
         if tools:
