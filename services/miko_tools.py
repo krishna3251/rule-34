@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
@@ -291,10 +290,34 @@ class MikoToolRegistry:
             if len(commands_found) >= limit:
                 break
 
+        slash_commands: list[dict[str, Any]] = []
+        if not query or "slash" in query or "/" in query:
+            for command in sorted(
+                context.bot.tree.walk_commands(),
+                key=lambda item: getattr(item, "qualified_name", item.name).casefold(),
+            ):
+                name = getattr(command, "qualified_name", command.name)
+                description = str(getattr(command, "description", "") or "").strip()
+                haystack = f"/{name} {description}".casefold()
+                if query and query not in haystack:
+                    continue
+                slash_commands.append(
+                    {
+                        "name": f"/{name}",
+                        "help": description[:240],
+                        "category": getattr(command, "parent", None).name
+                        if getattr(command, "parent", None)
+                        else None,
+                    }
+                )
+                if len(slash_commands) >= limit:
+                    break
+
         return {
             "success": True,
-            "count": len(commands_found),
-            "commands": commands_found,
+            "count": len(commands_found) + len(slash_commands),
+            "prefix_commands": commands_found,
+            "slash_commands": slash_commands,
         }
 
     async def _get_channel_info(
