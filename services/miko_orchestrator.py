@@ -1,115 +1,164 @@
 from __future__ import annotations
 
 import logging
-import time
 from dataclasses import dataclass
 from typing import Any
 
 from services.miko_ai import MikoAI
+from services.miko_context import MikoContextBuilder
+from services.miko_gate import MikoGate
 from services.miko_memory import MikoMemory
+from services.miko_profile import MikoProfile
+from services.miko_response import MikoResponseProcessor
+from services.miko_router import MikoRouter
 
 logger = logging.getLogger("discord_bot")
 
 
 @dataclass(slots=True)
-class MikoDecision:
-    respond: bool
-    prompt: str = ""
+class MikoResult:
+    replied: bool
+    text: str | None = None
     reason: str = ""
 
 
 class MikoOrchestrator:
-    """Rukiya-style orchestration layer.
-
-    Decision engine -> Memory -> AI provider -> response.
-    Each responsibility is isolated so the AI provider can change without
-    rewriting Discord message handling.
-    """
-
-    RESPONSE_COOLDOWN = 1.0
+    """Central coordinator. Feature logic belongs to dedicated services."""
 
     def __init__(self) -> None:
+        self.gate = MikoGate()
         self.memory = MikoMemory()
+        self.profile = MikoProfile()
+        self.router = MikoRouter()
+        self.context = MikoContextBuilder()
         self.ai = MikoAI()
-        self.last_response: dict[int, float] = {}
+        self.response = MikoResponseProcessor()
 
-    def extract_trigger(self, message: Any, bot: Any) -> str | None:
-        """Return prompt only when the user explicitly summons Miko."""
-        content = message.content.strip()
+    async def handle(
+        self,
+        message: Any,
+        bot: Any,
+        *,
+        auto_chat: bool = False,
+        admin_level: int = 1,
+        disabled: bool = False,
+        quiet: bool = False,
+    ) -> MikoResult:
+        if disabled:
+            return MikoResult(False, reason="channel_disabled")
 
-        if bot.user:
-            for token in (f"<@{bot.user.id}>", f"<@!{bot.user.id}>"):
-                if token in content:
-                    return content.replace(token, "").strip()
+        if quiet:
+            trigger = self.gate._extract_trigger(message, bot)
+            if trigger[1] is False:
+                return MikoResult(False, reason="quiet_mode")
 
-        lowered = content.casefold()
-        if lowered == "miko":
-            return ""
+        profile = self.profile.get(message.author.id)
+        user_level_cap = int(profile.get("level_cap", 2) or 2)
 
-        for prefix in ("miko ", "miko,", "miko:", "miko -"):
-            if lowered.startswith(prefix):
-                return content[len(prefix):].strip(" ,:~-")
-
-        return None
-
-    def decide(self, message: Any, bot: Any, auto_chat: bool = False) -> MikoDecision:
-        if getattr(message.author, "bot", False):
-            return MikoDecision(False, reason="bot_message")
-
-        prompt = self.extract_trigger(message, bot)
-        if prompt is None and not auto_chat:
-            return MikoDecision(False, reason="not_summoned")
-
-        user_id = message.author.id
-        now = time.monotonic()
-        if now - self.last_response.get(user_id, 0) < self.RESPONSE_COOLDOWN:
-            return MikoDecision(False, reason="cooldown")
-
-        self.last_response[user_id] = now
-
-        if not prompt:
-            prompt = (
-                "The user has summoned you by saying your name. "
-                "Greet them naturally and invite them to talk."
-            )
-
-        return MikoDecision(
-            True,
-            prompt=prompt,
-            reason="auto_chat" if auto_chat else "summoned",
+        decision = await self.gate.check(
+            message,
+            bot,
+            auto_chat=auto_chat,
+            admin_level=admin_level,
+            user_level_cap=user_level_cap,
         )
-
-    async def handle(self, message: Any, bot: Any, auto_chat: bool = False) -> str | None:
-        decision = self.decide(message, bot, auto_chat=auto_chat)
         if not decision.respond:
-            return None
+            return MikoResult(False, reason=decision.reason)
 
-        guild_id = getattr(message.guild, "id", None)
-        channel_id = message.channel.id
+        if decision.prompt.casefold() in {
+            "stop flirting",
+            "stop flirting please",
+            "don't flirt",
+            "dont flirt",
+        }:
+            self.profile.set(message.author.id, "level_cap", 0)
+            decision.spice_level = 0
+            decision.mood = "serious"
 
-        # Read history first so the current message is not duplicated in the prompt.
-        history = self.memory.history(message.author.id, guild_id, channel_id)
+        history = self.memory.history(
+            message.author.id,
+            getattr(message.guild, "id", None),
+            message.channel.id,
+        )
+        intent = self.router.classify(decision.prompt)
+        profile = self.profile.get(message.author.id)
+
         self.memory.add(
             message.author.id,
             "user",
             decision.prompt,
-            guild_id,
-            channel_id,
+            getattr(message.guild, "id", None),
+            message.channel.id,
         )
 
-        reply = await self.ai.generate(decision.prompt, history)
+        messages = self.context.build(
+            prompt=decision.prompt,
+            history=history,
+            spice_level=decision.spice_level,
+            mood=decision.mood,
+            intent=intent,
+            profile=profile,
+            strict=decision.reason == "safety_refusal",
+        )
+
+        await self.gate.acquire_ai_slot()
+        try:
+            reply = await self.ai.generate(
+                messages,
+                strict=decision.reason == "safety_refusal",
+            )
+        finally:
+            self.gate.release_ai_slot()
+
+        valid, cleaned, validation_reason = self.response.validate(
+            message.author.id,
+            reply,
+            decision.spice_level,
+        )
+
+        if not valid:
+            strict_messages = self.context.build(
+                prompt=decision.prompt,
+                history=history,
+                spice_level=0,
+                mood="serious",
+                intent=intent,
+                profile=profile,
+                strict=True,
+            )
+
+            await self.gate.acquire_ai_slot()
+            try:
+                retry = await self.ai.generate(strict_messages, strict=True)
+            finally:
+                self.gate.release_ai_slot()
+
+            retry_valid, retry_cleaned, retry_reason = self.response.validate(
+                message.author.id,
+                retry,
+                0,
+            )
+
+            if retry_valid:
+                cleaned = retry_cleaned
+            else:
+                logger.warning(
+                    "Miko output rejected user=%s reason=%s retry=%s",
+                    message.author.id,
+                    validation_reason,
+                    retry_reason,
+                )
+                cleaned = self.response.fallback(retry_reason)
 
         self.memory.add(
             message.author.id,
             "assistant",
-            reply,
-            guild_id,
-            channel_id,
+            cleaned,
+            getattr(message.guild, "id", None),
+            message.channel.id,
         )
-        return reply
 
-    def reset_memory(self, user_id: int, guild_id: int | None, channel_id: int) -> None:
-        self.memory.reset(user_id, guild_id, channel_id)
+        return MikoResult(True, cleaned, reason=decision.reason)
 
     @property
     def ai_ready(self) -> bool:
@@ -118,3 +167,10 @@ class MikoOrchestrator:
     @property
     def model(self) -> str:
         return self.ai.model
+
+    def reset_memory(self, user_id: int, guild_id: int | None, channel_id: int) -> None:
+        self.memory.reset(user_id, guild_id, channel_id)
+
+    def forget_user(self, user_id: int) -> None:
+        self.memory.reset(user_id)
+        self.profile.forget(user_id)
