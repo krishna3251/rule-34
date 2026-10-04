@@ -83,6 +83,37 @@ class RepositorySmokeTests(unittest.TestCase):
         self.assertTrue({"r34", "r34random", "trending", "fav"} <= r34_prefix)
         self.assertIn("verification_status", verification_prefix)
 
+    def test_requested_slash_command_coverage(self):
+        expected = {
+            "cogs/Detection_Cog.py": {
+                "cfcheck", "cfdetail", "cfstatus", "cftest", "cfhelp",
+            },
+            "cogs/instructor.py": {
+                "r34search", "r34mirrors", "r34debug", "r34debugraw", "r34debughelp",
+            },
+            "cogs/miko_chat.py": {
+                "mikosetchat", "mikounsetchat", "mikosetlevel", "mikodisabled",
+                "mikoenabled", "mikoquiet", "mikochatinfo", "resetmiko",
+                "forgetmiko", "stopflirting", "allowflirting", "askmiko",
+            },
+            "cogs/personality.py": {"mood"},
+            "cogs/r34.py": {
+                "r34", "r34random", "r34girl", "r34anime", "r34milf",
+                "r34hentai", "r34furry", "trending", "fav", "r34help",
+                "nsfw", "random",
+            },
+            "cogs/search.py": {"search"},
+            "cogs/verification.py": {
+                "verify", "verification_stats", "force_verify",
+                "verification_status",
+            },
+        }
+
+        for path, names in expected.items():
+            slash = command_names(path, prefix=False)
+            missing = sorted(names - slash)
+            self.assertFalse(missing, f"{path} missing slash commands: {missing}")
+
     def test_default_prefix_is_not_lost(self):
         source = (ROOT / "main.py").read_text(encoding="utf-8")
         self.assertIn('when_mentioned_or("miko!", "~")', source)
