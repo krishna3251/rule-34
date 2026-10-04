@@ -68,6 +68,22 @@ class RepositorySmokeTests(unittest.TestCase):
         ):
             self.assertIn(f'name="{name}"', source)
 
+    def test_miko_emotion_table(self):
+        source = (ROOT / "services/miko_emotion.py").read_text(encoding="utf-8")
+        expected = {
+            1: "Neutral", 2: "Smile", 3: "Happy", 4: "Wink", 5: "Laugh",
+            6: "Tease", 7: "Thinking", 8: "Curious", 9: "Confused",
+            10: "Surprised", 11: "Shocked", 12: "Angry",
+            13: "Embarrassed", 14: "Flustered", 15: "Sad", 16: "Tired",
+            17: "Annoyed", 18: "Pout", 19: "Nervous", 20: "Crying",
+            21: "Blushing Happy", 22: "Love", 23: "Smug", 24: "Sleepy",
+        }
+        for emotion_id, name in expected.items():
+            self.assertIn(f'{emotion_id}: "{name}"', source)
+
+        self.assertIn("Yae Miko Discord reaction images.zip", source)
+        self.assertIn("_extract_from_zip", source)
+
     def test_miko_guardrails_remain(self):
         gate = (ROOT / "services/miko_gate.py").read_text(encoding="utf-8")
         personality = (ROOT / "services/miko_personality.py").read_text(encoding="utf-8")
