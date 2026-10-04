@@ -1,0 +1,23 @@
+name: Rule43 smoke tests
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile project
+        run: python -m compileall -q . -x '(^|/)(\.git|\.venv|venv|env|__pycache__)(/|$)'
+      - name: Run Miko static tests
+        run: python -m unittest discover -s tests -p 'test_*.py' -v
