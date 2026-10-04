@@ -267,7 +267,19 @@ class MikoBot(commands.Bot):
                 message.guild.id, {}).get('prefix')
 
             if custom_prefix:
-                return commands.when_mentioned_or(custom_prefix)(bot, message)
+                custom_get_prefix = commands.when_mentioned_or(custom_prefix)
+                custom_prefixes = await custom_get_prefix(bot, message)
+                default_values = (
+                    list(default_prefixes)
+                    if isinstance(default_prefixes, (list, tuple))
+                    else [default_prefixes]
+                )
+                custom_values = (
+                    list(custom_prefixes)
+                    if isinstance(custom_prefixes, (list, tuple))
+                    else [custom_prefixes]
+                )
+                return list(dict.fromkeys(custom_values + default_values))
 
         return default_prefixes
 
