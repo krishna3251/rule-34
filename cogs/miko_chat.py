@@ -6,6 +6,7 @@ from pathlib import Path
 
 import discord
 from discord.ext import commands
+from discord import app_commands
 
 from services.miko_orchestrator import MikoOrchestrator
 
@@ -321,6 +322,194 @@ class MikoChat(commands.Cog):
             ctx.channel.id,
         )
         await ctx.send(cleaned)
+
+
+    @app_commands.command(name="mikosetchat", description="Set Miko auto-chat in a channel")
+    @app_commands.describe(channel="Channel where Miko should automatically chat")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def miko_set_chat_slash(
+        self,
+        interaction: discord.Interaction,
+        channel: discord.TextChannel | None = None,
+    ) -> None:
+        target = channel or interaction.channel
+        if not isinstance(target, discord.TextChannel):
+            await interaction.response.send_message("❌ Please use this in a text channel.", ephemeral=True)
+            return
+        self.chat_channels[interaction.guild_id] = target.id
+        self.save_data()
+        status = "AI connected" if self.orchestrator.ai_ready else "AI not configured"
+        await interaction.response.send_message(
+            f"Miko auto-chat set to {target.mention}. {status}"
+        )
+
+    @app_commands.command(name="mikounsetchat", description="Remove Miko auto-chat")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def miko_unset_chat_slash(self, interaction: discord.Interaction) -> None:
+        if interaction.guild_id is None:
+            await interaction.response.send_message("❌ Server only.", ephemeral=True)
+            return
+        removed = self.chat_channels.pop(interaction.guild_id, None)
+        self.save_data()
+        await interaction.response.send_message(
+            "Miko auto-chat removed."
+            if removed
+            else "No Miko auto-chat channel was configured."
+        )
+
+    @app_commands.command(name="mikosetlevel", description="Set Miko chat level 0-2")
+    @app_commands.describe(level="0=clean, 1=playful, 2=stronger mature teasing", channel="Channel to configure")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def miko_set_level_slash(
+        self,
+        interaction: discord.Interaction,
+        level: app_commands.Range[int, 0, 2],
+        channel: discord.TextChannel | None = None,
+    ) -> None:
+        target = channel or interaction.channel
+        if not isinstance(target, discord.TextChannel):
+            await interaction.response.send_message("❌ Please use this in a text channel.", ephemeral=True)
+            return
+        if int(level) == 2 and not target.is_nsfw():
+            await interaction.response.send_message("Level 2 is only available in an age-restricted channel.", ephemeral=True)
+            return
+        self.channel_levels[target.id] = int(level)
+        self.save_data()
+        await interaction.response.send_message(
+            f"Miko level for {target.mention} is now {int(level)}."
+        )
+
+    @app_commands.command(name="mikodisabled", description="Disable Miko in this channel")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def miko_disabled_slash(self, interaction: discord.Interaction) -> None:
+        self.disabled_channels.add(interaction.channel_id)
+        self.save_data()
+        await interaction.response.send_message("Miko is disabled in this channel.")
+
+    @app_commands.command(name="mikoenabled", description="Enable Miko in this channel")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def miko_enabled_slash(self, interaction: discord.Interaction) -> None:
+        self.disabled_channels.discard(interaction.channel_id)
+        self.save_data()
+        await interaction.response.send_message("Miko is enabled in this channel.")
+
+    @app_commands.command(name="mikoquiet", description="Toggle Miko quiet mode in this channel")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def miko_quiet_slash(self, interaction: discord.Interaction) -> None:
+        if interaction.channel_id in self.quiet_channels:
+            self.quiet_channels.remove(interaction.channel_id)
+            status = "disabled"
+        else:
+            self.quiet_channels.add(interaction.channel_id)
+            status = "enabled"
+        self.save_data()
+        await interaction.response.send_message(f"Miko quiet mode {status} in this channel.")
+
+    @app_commands.command(name="mikochatinfo", description="Show Miko chat configuration")
+    async def miko_chat_info_slash(self, interaction: discord.Interaction) -> None:
+        channel_id = self.chat_channels.get(interaction.guild_id or 0)
+        channel = interaction.guild.get_channel(channel_id) if interaction.guild and channel_id else None
+        level = self.channel_levels.get(interaction.channel_id, 1)
+        disabled = "yes" if interaction.channel_id in self.disabled_channels else "no"
+        quiet = "yes" if interaction.channel_id in self.quiet_channels else "no"
+        await interaction.response.send_message(
+            "Miko Chat\n"
+            f"Auto-chat: {channel.mention if channel else 'Not configured'}\n"
+            f"AI: {'connected' if self.orchestrator.ai_ready else 'not configured'}\n"
+            f"Primary: {self.orchestrator.provider} / {self.orchestrator.model}\n"
+            f"Live web: {'enabled' if self.orchestrator.web_search_ready else 'unavailable'}\n"
+            f"Agent tools: {len(self.orchestrator.tool_names)}\n"
+            "Memory: 30 min / last 10 messages\n"
+            f"Channel level: {level}\n"
+            f"Disabled: {disabled}\n"
+            f"Quiet mode: {quiet}"
+        )
+
+    @app_commands.command(name="resetmiko", description="Clear your Miko conversation memory")
+    async def reset_miko_slash(self, interaction: discord.Interaction) -> None:
+        self.orchestrator.reset_memory(
+            interaction.user.id,
+            interaction.guild_id,
+            interaction.channel_id,
+        )
+        await interaction.response.send_message("Miko memory cleared for you.", ephemeral=True)
+
+    @app_commands.command(name="forgetmiko", description="Delete your stored Miko memory and profile")
+    async def forget_miko_slash(self, interaction: discord.Interaction) -> None:
+        self.orchestrator.forget_user(interaction.user.id)
+        await interaction.response.send_message(
+            "Your stored Miko memory and profile have been deleted.",
+            ephemeral=True,
+        )
+
+    @app_commands.command(name="stopflirting", description="Keep Miko clean for your conversations")
+    async def stop_flirting_slash(self, interaction: discord.Interaction) -> None:
+        self.orchestrator.profile.set(interaction.user.id, "level_cap", 0)
+        await interaction.response.send_message("Understood. Miko will keep things clean for you.")
+
+    @app_commands.command(name="allowflirting", description="Restore your personal Miko level cap")
+    async def allow_flirting_slash(self, interaction: discord.Interaction) -> None:
+        self.orchestrator.profile.set(interaction.user.id, "level_cap", 2)
+        await interaction.response.send_message("Your personal Miko level cap has been restored.")
+
+    @app_commands.command(name="askmiko", description="Ask Miko a direct question")
+    @app_commands.describe(question="What you want to ask Miko")
+    async def ask_miko_slash(self, interaction: discord.Interaction, question: str) -> None:
+        question = question.strip()
+        if not question:
+            await interaction.response.send_message("❌ Please provide a question.", ephemeral=True)
+            return
+
+        history = self.orchestrator.memory.history(
+            interaction.user.id,
+            interaction.guild_id,
+            interaction.channel_id,
+        )
+        intent = self.orchestrator.router.classify(question)
+        profile = self.orchestrator.profile.get(interaction.user.id)
+        level = min(
+            2,
+            int(profile.get("level_cap", 2) or 2),
+            self.channel_levels.get(interaction.channel_id, 1),
+        )
+        messages = self.orchestrator.context.build(
+            prompt=question,
+            history=history,
+            spice_level=level,
+            mood="serious" if intent == "serious" else "playful",
+            intent=intent,
+            profile=profile,
+        )
+        self.orchestrator.memory.add(
+            interaction.user.id,
+            "user",
+            question,
+            interaction.guild_id,
+            interaction.channel_id,
+        )
+
+        await interaction.response.defer()
+        await self.orchestrator.gate.acquire_ai_slot()
+        try:
+            reply = await self.orchestrator.ai.generate(messages)
+        finally:
+            self.orchestrator.gate.release_ai_slot()
+
+        valid, cleaned, reason = self.orchestrator.response.validate(
+            interaction.user.id,
+            reply,
+            level,
+        )
+        if not valid:
+            cleaned = self.orchestrator.response.fallback(reason)
+        self.orchestrator.memory.add(
+            interaction.user.id,
+            "assistant",
+            cleaned,
+            interaction.guild_id,
+            interaction.channel_id,
+        )
+        await interaction.followup.send(cleaned)
 
 
 async def setup(bot: commands.Bot):
