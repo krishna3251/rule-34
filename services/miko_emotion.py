@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-import re
+import base64
+import io
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -75,8 +76,14 @@ class MikoEmotionEngine:
         "serious": 7,
     }
 
-    def __init__(self, image_dir: str | Path = "assets/miko/emotions") -> None:
+    def __init__(
+        self,
+        image_dir: str | Path = "assets/miko/emotions",
+        cache_dir: str | Path = "data/miko_emotion_cache",
+    ) -> None:
         self.image_dir = Path(image_dir)
+        self.bundle_dir = self.image_dir / "source"
+        self.cache_dir = Path(cache_dir)
 
     def analyze(
         self,
@@ -118,9 +125,11 @@ class MikoEmotionEngine:
             scores[6] += 1
             scores[23] += 1
 
-        if spice_level >= 1:
+        # Spice level changes what Miko is allowed to say, not her facial
+        # expression by itself. A normal playful channel should not make her
+        # look teasing on every single message.
+        if spice_level == 2 and scores[6] > 0:
             scores[6] += 1
-            scores[23] += 1
 
         # Prefer stronger, specific reactions over the neutral fallback.
         best_id = max(scores, key=scores.get)
@@ -139,9 +148,53 @@ class MikoEmotionEngine:
         )
 
     def image_path(self, emotion_id: int) -> Path:
-        """Return the canonical numbered image path for an emotion ID."""
+        """Return the cached numbered image path for an emotion ID."""
         emotion_id = max(1, min(24, int(emotion_id)))
-        return self.image_dir / f"{emotion_id:02d}.webp"
+
+        direct = self.image_dir / f"{emotion_id:02d}.webp"
+        if direct.is_file():
+            return direct
+
+        cached = self.cache_dir / f"{emotion_id:02d}.webp"
+        if cached.is_file():
+            return cached
+
+        return self._materialize_from_bundle(emotion_id) or cached
+
+    def _materialize_from_bundle(self, emotion_id: int) -> Path | None:
+        """Rebuild one reaction image from the bundled 6x4 sprite."""
+        chunks = sorted(self.bundle_dir.glob("*.b64"))
+        if not chunks:
+            return None
+
+        try:
+            encoded = "".join(
+                chunk.read_text(encoding="ascii").strip()
+                for chunk in chunks
+            )
+            raw = base64.b64decode(encoded, validate=True)
+            from PIL import Image
+
+            with Image.open(io.BytesIO(raw)) as sprite:
+                sprite.load()
+                columns = 6
+                rows = 4
+                tile_width = sprite.width // columns
+                tile_height = sprite.height // rows
+
+                index = emotion_id - 1
+                left = (index % columns) * tile_width
+                top = (index // columns) * tile_height
+                tile = sprite.crop(
+                    (left, top, left + tile_width, top + tile_height)
+                ).convert("RGB")
+
+            self.cache_dir.mkdir(parents=True, exist_ok=True)
+            target = self.cache_dir / f"{emotion_id:02d}.webp"
+            tile.save(target, "WEBP", quality=88, method=6)
+            return target
+        except (OSError, ValueError, ImportError, base64.binascii.Error):
+            return None
 
     def available(self, emotion_id: int) -> bool:
         return self.image_path(emotion_id).is_file()
