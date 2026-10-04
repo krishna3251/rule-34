@@ -94,7 +94,7 @@ class MikoChat(commands.Cog):
 
         file = discord.File(
             image_path,
-            filename=f"miko_{emotion_id:02d}.webp",
+            filename=f"miko_{emotion_id:02d}{image_path.suffix}",
         )
         await message.reply(
             text,
