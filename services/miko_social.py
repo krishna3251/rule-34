@@ -27,27 +27,29 @@ class MikoSocialEngine:
 
     @staticmethod
     def temperature(intent: str, mood: str, turn_count: int) -> float:
+        # Keep casual conversation expressive, while making factual/helpful
+        # requests progressively more deterministic.
         base = {
-            "chat": 0.92,
+            "chat": 0.88,
             "gaming": 0.90,
-            "help": 0.78,
-            "coding": 0.72,
-            "search": 0.68,
-            "action": 0.64,
-            "serious": 0.55,
-            "goodbye": 0.80,
-        }.get(intent, 0.88)
+            "help": 0.74,
+            "coding": 0.66,
+            "search": 0.60,
+            "action": 0.58,
+            "serious": 0.50,
+            "goodbye": 0.76,
+        }.get(intent, 0.84)
 
         if mood == "happy":
-            base += 0.04
+            base += 0.05
         elif mood == "concerned":
-            base -= 0.08
+            base -= 0.06
         elif mood == "serious":
-            base -= 0.10
+            base -= 0.08
 
-        # Tiny deterministic drift prevents every turn from feeling identical.
-        drift = 0.025 * math.sin(turn_count * 1.7)
-        return max(0.45, min(1.05, base + drift))
+        # Small deterministic drift adds variety without making the target unpredictable.
+        drift = 0.02 * math.sin(turn_count * 1.7)
+        return max(0.45, min(0.98, base + drift))
 
     def prompt_block(
         self,
@@ -93,3 +95,4 @@ class MikoSocialEngine:
             "It is acceptable to disagree, correct, joke, pause, or show mild surprise. "
             "Do not pretend to have feelings or real-world experiences."
         )
+    
