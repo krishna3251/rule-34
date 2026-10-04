@@ -71,10 +71,11 @@ class MikoEnhancementTests(unittest.TestCase):
         )
 
         self.assertTrue(decision.respond)
-        self.assertEqual(decision.intent, "gaming")
+        self.assertEqual(decision.intent, "search")
         self.assertEqual(decision.priority, "high")
-        self.assertEqual(decision.response_mode, "gaming")
+        self.assertEqual(decision.response_mode, "search")
         self.assertEqual(decision.memory_scope, "user+channel")
+        self.assertTrue(decision.web_search)
         self.assertFalse(decision.allow_actions)
 
     def test_safety_decision_forces_clean_mode(self) -> None:
