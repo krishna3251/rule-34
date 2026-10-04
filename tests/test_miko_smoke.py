@@ -47,6 +47,22 @@ class RepositorySmokeTests(unittest.TestCase):
         for path in paths:
             py_compile.compile(str(path), doraise=True)
 
+    def test_miko_chat_engine_architecture(self):
+        engine = (ROOT / "services/miko_chat_engine.py").read_text(encoding="utf-8")
+        decision = (ROOT / "services/miko_decision.py").read_text(encoding="utf-8")
+        cog = (ROOT / "cogs/miko_chat.py").read_text(encoding="utf-8")
+
+        self.assertIn("class MikoChatEngine", engine)
+        self.assertIn("self.decision = MikoDecisionEngine", engine)
+        self.assertIn("decision = self.decision.decide", engine)
+        self.assertIn("async def ask_direct", engine)
+        self.assertIn("class MikoDecisionEngine", decision)
+        self.assertIn("memory_scope", decision)
+        self.assertIn("response_mode", decision)
+        self.assertIn("from services.miko_chat_engine import MikoChatEngine", cog)
+        self.assertIn("self.chat_engine.handle", cog)
+        self.assertIn("self.chat_engine.ask_direct", cog)
+
     def test_miko_provider_stack(self):
         source = (ROOT / "services/miko_ai.py").read_text(encoding="utf-8")
         orchestrator = (ROOT / "services/miko_orchestrator.py").read_text(encoding="utf-8")
