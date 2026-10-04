@@ -14,8 +14,6 @@ logger = logging.getLogger("discord_bot")
 
 @dataclass(slots=True)
 class MikoAIResponse:
-    """One provider turn, including local function calls requested by the model."""
-
     text: str
     assistant_message: dict[str, Any]
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
@@ -31,71 +29,44 @@ class MikoAI:
 
     def __init__(self) -> None:
         self.openrouter_api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
-        self.openrouter_model = os.getenv(
-            "OPENROUTER_MODEL",
-            "openai/gpt-4o-mini",
-        ).strip()
-
+        self.openrouter_model = os.getenv("OPENROUTER_MODEL", "openai/gpt-4o-mini").strip()
         self.groq_api_key = os.getenv("GROQ_API_KEY", "").strip()
-        self.groq_model = os.getenv(
-            "GROQ_MODEL",
-            "openai/gpt-oss-20b",
-        ).strip()
-
-        self.web_search_enabled = (
-            os.getenv("MIKO_WEB_SEARCH", "true").casefold().strip()
-            not in {"0", "false", "no", "off"}
-        )
-
+        self.groq_model = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b").strip()
+        self.web_search_enabled = os.getenv("MIKO_WEB_SEARCH", "true").casefold().strip() not in {
+            "0", "false", "no", "off"
+        }
+        self.temperature = self._env_float("MIKO_TEMPERATURE", 0.90, 0.2, 1.2)
+        self.strict_temperature = self._env_float("MIKO_STRICT_TEMPERATURE", 0.45, 0.1, 0.9)
         self.groq_client: Any = None
         self._init_groq_client()
 
-        logger.info(
-            "Miko AI providers | primary=%s%s | backup=%s%s | web_search=%s",
-            self.openrouter_model if self.openrouter_api_key else "not configured",
-            " (OpenRouter)" if self.openrouter_api_key else "",
-            self.groq_model if self.groq_api_key else "not configured",
-            " (Groq)" if self.groq_api_key else "",
-            self.web_search_enabled,
-        )
+    @staticmethod
+    def _env_float(name: str, default: float, minimum: float, maximum: float) -> float:
+        try:
+            return max(minimum, min(maximum, float(os.getenv(name, str(default)))))
+        except (TypeError, ValueError):
+            return default
 
     def _init_groq_client(self) -> None:
         if not self.groq_api_key:
-            logger.warning("GROQ_API_KEY not found; Groq fallback is unavailable")
             return
-
         try:
             from groq import Groq
-
             self.groq_client = Groq(api_key=self.groq_api_key)
         except Exception as exc:
-            logger.error(
-                "Failed to initialize Groq fallback: %s",
-                exc,
-                exc_info=True,
-            )
+            logger.error("Failed to initialize Groq: %s", exc, exc_info=True)
 
     @property
     def ready(self) -> bool:
         return bool(self.openrouter_api_key or self.groq_client)
 
     @property
-    def primary_ready(self) -> bool:
-        return bool(self.openrouter_api_key)
-
-    @property
     def web_search_available(self) -> bool:
-        # OpenRouter's server-side web-search tool works independently of the
-        # model's native web-search support and can fall back to Exa.
-        return bool(
-            self.openrouter_api_key and self.web_search_enabled
-        )
+        return bool(self.openrouter_api_key and self.web_search_enabled)
 
     @property
     def model(self) -> str:
-        if self.openrouter_api_key:
-            return self.openrouter_model
-        return self.groq_model
+        return self.openrouter_model if self.openrouter_api_key else self.groq_model
 
     @property
     def provider(self) -> str:
@@ -107,15 +78,16 @@ class MikoAI:
 
     async def generate(
         self,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, Any]],
         strict: bool = False,
+        temperature: float | None = None,
     ) -> str:
-        """Compatibility helper for direct command paths."""
         result = await self.generate_agent(
             messages,
             tool_schemas=[],
             allow_web=self.web_search_available,
             strict=strict,
+            temperature=temperature,
         )
         return result.text or "Ara ara~ Main ek pal ke liye soch mein kho gayi thi."
 
@@ -126,8 +98,12 @@ class MikoAI:
         tool_schemas: list[dict[str, Any]] | None = None,
         allow_web: bool = True,
         strict: bool = False,
+        temperature: float | None = None,
     ) -> MikoAIResponse:
-        """Try OpenRouter first, then Groq if the primary request fails."""
+        temp = (
+            self.strict_temperature if strict else self.temperature
+        ) if temperature is None else max(0.1, min(1.2, float(temperature)))
+
         if self.openrouter_api_key:
             try:
                 return await self._openrouter_generate(
@@ -135,13 +111,10 @@ class MikoAI:
                     tool_schemas=tool_schemas,
                     allow_web=allow_web,
                     strict=strict,
+                    temperature=temp,
                 )
             except Exception as exc:
-                logger.warning(
-                    "Miko OpenRouter primary failed; using Groq backup: %s",
-                    exc,
-                    exc_info=True,
-                )
+                logger.warning("OpenRouter failed; using Groq: %s", exc, exc_info=True)
 
         if self.groq_client:
             try:
@@ -150,25 +123,16 @@ class MikoAI:
                     tool_schemas=tool_schemas,
                     allow_web=allow_web,
                     strict=strict,
+                    temperature=temp,
                 )
             except Exception as exc:
-                logger.error(
-                    "Miko Groq backup failed: %s",
-                    exc,
-                    exc_info=True,
-                )
+                logger.error("Groq failed: %s", exc, exc_info=True)
 
         return MikoAIResponse(
-            text=(
-                "Main abhi kisi AI provider se connect nahi ho pa rahi hoon. "
-                "Thodi der baad try karo."
-            ),
+            text="Main abhi AI provider se connect nahi ho pa rahi hoon. Thodi der baad try karo.",
             assistant_message={
                 "role": "assistant",
-                "content": (
-                    "Main abhi kisi AI provider se connect nahi ho pa rahi hoon. "
-                    "Thodi der baad try karo."
-                ),
+                "content": "Main abhi AI provider se connect nahi ho pa rahi hoon. Thodi der baad try karo.",
             },
             provider="none",
             model="",
@@ -179,12 +143,8 @@ class MikoAI:
         return {
             "role": "system",
             "content": (
-                "STRICT OUTPUT MODE: Keep the answer clean, non-explicit, short and in character. "
-                "Remember that Miko is female; use feminine self-reference in Hindi/Hinglish. "
-                "For Miko's own actions use forms such as 'karti hoon', 'karungi', 'gayi', "
-                "'rahi hoon', 'sakti hoon', 'thi', and 'meri'. "
-                "Do not use masculine self-forms such as 'karta hoon', 'karunga', 'gaya', "
-                "'raha hoon', 'sakta hoon', 'tha', or 'mera' for Miko."
+                "STRICT OUTPUT MODE: Keep the reply clean, concise, non-graphic and in character. "
+                "Miko is female and uses feminine self-reference in Hindi/Hinglish."
             ),
         }
 
@@ -195,6 +155,7 @@ class MikoAI:
         tool_schemas: list[dict[str, Any]] | None,
         allow_web: bool,
         strict: bool,
+        temperature: float,
     ) -> MikoAIResponse:
         request_messages = list(messages)
         if strict:
@@ -202,36 +163,31 @@ class MikoAI:
 
         tools: list[dict[str, Any]] = []
         if allow_web and self.web_search_enabled:
-            tools.append(
-                {
-                    "type": "openrouter:web_search",
-                    "parameters": {
-                        "engine": "auto",
-                        "max_results": 5,
-                        "max_total_results": 12,
-                    },
-                }
-            )
+            tools.append({
+                "type": "openrouter:web_search",
+                "parameters": {
+                    "engine": "auto",
+                    "max_results": 5,
+                    "max_total_results": 12,
+                },
+            })
         if tool_schemas:
             tools.extend(tool_schemas)
 
         payload: dict[str, Any] = {
             "model": self.openrouter_model,
             "messages": request_messages,
-            "temperature": 0.82 if not strict else 0.5,
-            "max_completion_tokens": 400,
-            "tool_choice": "auto",
+            "temperature": temperature,
+            "max_completion_tokens": 450,
         }
         if tools:
             payload["tools"] = tools
-        else:
-            payload.pop("tool_choice", None)
+            payload["tool_choice"] = "auto"
 
         headers = {
             "Authorization": f"Bearer {self.openrouter_api_key}",
             "Content-Type": "application/json",
         }
-
         site_url = os.getenv("OPENROUTER_SITE_URL", "").strip()
         title = os.getenv("OPENROUTER_APP_TITLE", "Miko Discord Bot").strip()
         if site_url:
@@ -241,29 +197,14 @@ class MikoAI:
 
         timeout = aiohttp.ClientTimeout(total=35)
         async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.post(
-                self.OPENROUTER_URL,
-                json=payload,
-                headers=headers,
-            ) as response:
+            async with session.post(self.OPENROUTER_URL, json=payload, headers=headers) as response:
                 body = await response.json(content_type=None)
                 if response.status >= 400:
                     error = body.get("error", {}) if isinstance(body, dict) else {}
-                    message = (
-                        error.get("message")
-                        if isinstance(error, dict)
-                        else None
-                    )
-                    raise RuntimeError(
-                        f"OpenRouter HTTP {response.status}: "
-                        f"{message or str(body)[:600]}"
-                    )
+                    message = error.get("message") if isinstance(error, dict) else None
+                    raise RuntimeError(f"OpenRouter HTTP {response.status}: {message or str(body)[:600]}")
 
-        return self._parse_provider_response(
-            body,
-            provider="openrouter",
-            model=self.openrouter_model,
-        )
+        return self._parse_provider_response(body, provider="openrouter", model=self.openrouter_model)
 
     async def _groq_generate(
         self,
@@ -272,34 +213,23 @@ class MikoAI:
         tool_schemas: list[dict[str, Any]] | None,
         allow_web: bool,
         strict: bool,
+        temperature: float,
     ) -> MikoAIResponse:
         request_messages = list(messages)
         if strict:
             request_messages.insert(1, self._strict_message())
 
         tools = list(tool_schemas or [])
-
-        # Groq's browser-search server tool and local function tools use
-        # different request shapes. Prefer browser search when a live lookup
-        # is explicitly allowed and no local action tool is required.
-        use_groq_web = bool(
-            allow_web
-            and self.web_search_enabled
-            and not tools
-        )
+        use_groq_web = bool(allow_web and self.web_search_enabled and not tools)
 
         kwargs: dict[str, Any] = {
             "model": self.groq_model,
             "messages": request_messages,
-            "temperature": 0.82 if not strict else 0.5,
-            "max_completion_tokens": 400,
-            "reasoning_effort": os.getenv(
-                "MIKO_REASONING_EFFORT",
-                "low",
-            ),
+            "temperature": temperature,
+            "max_completion_tokens": 450,
+            "reasoning_effort": os.getenv("MIKO_REASONING_EFFORT", "low"),
             "include_reasoning": False,
         }
-
         if use_groq_web:
             kwargs["tools"] = [{"type": "browser_search"}]
             kwargs["tool_choice"] = "auto"
@@ -308,17 +238,10 @@ class MikoAI:
             kwargs["tool_choice"] = "auto"
 
         response = await asyncio.wait_for(
-            asyncio.to_thread(
-                lambda: self.groq_client.chat.completions.create(**kwargs)
-            ),
+            asyncio.to_thread(lambda: self.groq_client.chat.completions.create(**kwargs)),
             timeout=35,
         )
-
-        return self._parse_provider_response(
-            response,
-            provider="groq",
-            model=self.groq_model,
-        )
+        return self._parse_provider_response(response, provider="groq", model=self.groq_model)
 
     @staticmethod
     def _parse_provider_response(
@@ -327,20 +250,12 @@ class MikoAI:
         provider: str,
         model: str,
     ) -> MikoAIResponse:
-        choices = (
-            response.get("choices")
-            if isinstance(response, dict)
-            else getattr(response, "choices", None)
-        ) or []
+        choices = response.get("choices") if isinstance(response, dict) else getattr(response, "choices", None)
         if not choices:
             raise RuntimeError(f"{provider} returned no choices")
 
         choice = choices[0]
-        message = (
-            choice.get("message")
-            if isinstance(choice, dict)
-            else getattr(choice, "message", None)
-        )
+        message = choice.get("message") if isinstance(choice, dict) else getattr(choice, "message", None)
         if message is None:
             raise RuntimeError(f"{provider} returned no assistant message")
 
@@ -371,35 +286,24 @@ class MikoAI:
                 if not isinstance(arguments, dict):
                     raise ValueError("tool arguments must be an object")
             except Exception as exc:
-                logger.warning(
-                    "Ignoring malformed %s tool call: %s",
-                    provider,
-                    exc,
-                )
+                logger.warning("Ignoring malformed %s tool call: %s", provider, exc)
                 continue
 
-            tool_calls.append(
-                {
-                    "id": str(call_id),
+            tool_calls.append({
+                "id": str(call_id),
+                "name": str(name),
+                "arguments": arguments,
+            })
+            normalized_raw_calls.append({
+                "id": str(call_id),
+                "type": "function",
+                "function": {
                     "name": str(name),
-                    "arguments": arguments,
-                }
-            )
-            normalized_raw_calls.append(
-                {
-                    "id": str(call_id),
-                    "type": "function",
-                    "function": {
-                        "name": str(name),
-                        "arguments": arguments_raw or "{}",
-                    },
-                }
-            )
+                    "arguments": arguments_raw or "{}",
+                },
+            })
 
-        assistant_message = {
-            "role": "assistant",
-            "content": content,
-        }
+        assistant_message = {"role": "assistant", "content": content}
         if normalized_raw_calls:
             assistant_message["tool_calls"] = normalized_raw_calls
 
@@ -411,7 +315,6 @@ class MikoAI:
             text=text,
             assistant_message=assistant_message,
             tool_calls=tool_calls,
-            web_search_used=False,
             provider=provider,
             model=model,
         )
