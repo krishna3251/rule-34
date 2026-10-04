@@ -132,7 +132,7 @@ class MikoChat(commands.Cog):
         if result.replied and result.text:
             await message.reply(result.text, mention_author=False)
 
-    @commands.command(name="mikosetchat")
+    @commands.command(name="mikosetchat", aliases=["setchat"])
     @commands.has_permissions(administrator=True)
     async def miko_set_chat(
         self,
@@ -150,7 +150,7 @@ class MikoChat(commands.Cog):
         )
         await ctx.send(f"Miko auto-chat set to {channel.mention}. {status}")
 
-    @commands.command(name="mikounsetchat")
+    @commands.command(name="mikounsetchat", aliases=["unsetchat"])
     @commands.has_permissions(administrator=True)
     async def miko_unset_chat(self, ctx: commands.Context) -> None:
         removed = self.chat_channels.pop(ctx.guild.id, None)
@@ -161,7 +161,7 @@ class MikoChat(commands.Cog):
             else "No Miko auto-chat channel was configured."
         )
 
-    @commands.command(name="mikosetlevel")
+    @commands.command(name="mikosetlevel", aliases=["setlevel"])
     @commands.has_permissions(administrator=True)
     async def miko_set_level(
         self,
@@ -184,21 +184,21 @@ class MikoChat(commands.Cog):
             f"Miko level for {channel.mention} is now {level}."
         )
 
-    @commands.command(name="mikodisabled")
+    @commands.command(name="mikodisabled", aliases=["disable"])
     @commands.has_permissions(administrator=True)
     async def miko_disabled(self, ctx: commands.Context) -> None:
         self.disabled_channels.add(ctx.channel.id)
         self.save_data()
         await ctx.send("Miko is disabled in this channel.")
 
-    @commands.command(name="mikoenabled")
+    @commands.command(name="mikoenabled", aliases=["enable"])
     @commands.has_permissions(administrator=True)
     async def miko_enabled(self, ctx: commands.Context) -> None:
         self.disabled_channels.discard(ctx.channel.id)
         self.save_data()
         await ctx.send("Miko is enabled in this channel.")
 
-    @commands.command(name="mikoquiet")
+    @commands.command(name="mikoquiet", aliases=["quiet"])
     @commands.has_permissions(administrator=True)
     async def miko_quiet(self, ctx: commands.Context) -> None:
         if ctx.channel.id in self.quiet_channels:
@@ -211,7 +211,7 @@ class MikoChat(commands.Cog):
         self.save_data()
         await ctx.send(f"Miko quiet mode {status} in this channel.")
 
-    @commands.command(name="mikochatinfo")
+    @commands.command(name="mikochatinfo", aliases=["chatinfo"])
     async def miko_chat_info(self, ctx: commands.Context) -> None:
         channel_id = self.chat_channels.get(ctx.guild.id)
         channel = ctx.guild.get_channel(channel_id) if channel_id else None
