@@ -15,15 +15,8 @@ class PersonalityCog(commands.Cog):
     async def mood(self, interaction: discord.Interaction) -> None:
         await interaction.response.send_message(MikoPersonality.reply_to('tease'))
 
-    @commands.Cog.listener()
-    async def on_message(self, message: discord.Message) -> None:
-        if message.author.bot or not self.bot.user or self.bot.user not in message.mentions:
-            return
-        if message.content.strip().startswith(('/', 'n ', 'n!')):
-            return
-        clean = message.content.replace(f'<@{self.bot.user.id}>', '').replace(f'<@!{self.bot.user.id}>', '').strip()
-        await message.reply(MikoPersonality.greeting() if not clean else MikoPersonality.reply_to(clean), mention_author=False)
-
+    # Miko chat is handled by cogs.miko_chat using Groq and persistent memory.
+    # Keep this cog command-only so mentions do not produce duplicate replies.
 
 async def setup(bot: commands.Bot) -> None:
     await bot.add_cog(PersonalityCog(bot))
