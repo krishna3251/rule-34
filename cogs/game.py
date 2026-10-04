@@ -9,11 +9,14 @@ from dotenv import load_dotenv
 import traceback
 from urllib.parse import urlparse
 
-# Gemini SDK (optional)
+# Google GenAI SDK (optional)
 try:
-    import google.generativeai as genai
+    from google import genai
+    from google.genai import types
     HAS_GEMINI = True
 except ImportError:
+    genai = None
+    types = None
     HAS_GEMINI = False
 
 load_dotenv()
@@ -289,8 +292,6 @@ async def generate_ai_summary(title: str, tags: List[str], desc: str) -> str:
         return f"Check out '{title}' - a {tag_str} game! {desc[:100]}{'...' if len(desc) > 100 else ''}"
 
     try:
-        genai.configure(api_key=GEMINI_API_KEY)
-
         prompt = (
             f"Write a compelling 1-2 sentence recommendation for this game. "
             f"Be enthusiastic but concise.\n"
@@ -299,15 +300,23 @@ async def generate_ai_summary(title: str, tags: List[str], desc: str) -> str:
             f"Description: {desc[:500] if desc else 'No description available'}"
         )
 
-        model = genai.GenerativeModel(GEMINI_MODEL)
-        response = await asyncio.wait_for(asyncio.create_task(
-            asyncio.to_thread(model.generate_content,
-                              prompt,
-                              generation_config=genai.types.GenerationConfig(
-                                  max_output_tokens=120,
-                                  temperature=0.8,
-                              ))),
-                                          timeout=10.0)
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        try:
+            response = await asyncio.wait_for(
+                client.aio.models.generate_content(
+                    model=GEMINI_MODEL,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        max_output_tokens=120,
+                        temperature=0.8,
+                    ),
+                ),
+                timeout=10.0,
+            )
+        finally:
+            close_method = getattr(client, "close", None)
+            if close_method:
+                close_method()
 
         if response and response.text:
             return response.text.strip()
