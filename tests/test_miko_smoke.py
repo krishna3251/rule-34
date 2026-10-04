@@ -75,6 +75,25 @@ class RepositorySmokeTests(unittest.TestCase):
         self.assertIn("Never describe sexual acts", personality)
         self.assertIn("HIGH-INTELLIGENCE", personality)
 
+    def test_miko_emotion_map_is_complete(self):
+        emotion = (ROOT / "services/miko_emotion.py").read_text(encoding="utf-8")
+        for emotion_id in range(1, 25):
+            self.assertRegex(
+                emotion,
+                rf"{emotion_id}:\s+",
+                msg=f"missing emotion ID {emotion_id}",
+            )
+        self.assertIn('Path(image_dir)', emotion)
+        self.assertIn('f"{emotion_id:02d}.webp"', emotion)
+
+    def test_miko_result_carries_emotion(self):
+        source = (ROOT / "services/miko_orchestrator.py").read_text(encoding="utf-8")
+        chat = (ROOT / "cogs/miko_chat.py").read_text(encoding="utf-8")
+        self.assertIn("emotion_id: int = 1", source)
+        self.assertIn("emotion_id=emotion.id", source)
+        self.assertIn("miko_{emotion.id:02d}.webp", chat)
+        self.assertIn("discord.File", chat)
+
     def test_miko_command_bridges(self):
         search_prefix = command_names("cogs/search.py", prefix=True)
         personality_prefix = command_names("cogs/personality.py", prefix=True)
