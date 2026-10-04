@@ -96,7 +96,7 @@ class Config:
     REDIS_URL = os.getenv("REDIS_URL")
 
     # Bot settings
-    PREFIX = commands.when_mentioned_or("miko ", "miko!", "~")
+    PREFIX = commands.when_mentioned_or("miko!", "~")
     OWNER_IDS = [
         int(id_) for id_ in os.getenv("OWNER_IDS", "").split(",") if id_
     ]
@@ -394,22 +394,9 @@ class MikoBot(commands.Bot):
             logger.error(f"❌ Failed to sync commands: {e}")
 
     async def on_message(self, message: discord.Message):
-        """Enhanced message processing"""
+        """Route commands normally; Miko chat listeners handle direct summons."""
         if message.author.bot:
             return
-
-        # Check if bot is mentioned
-        if self.user and self.user in message.mentions and len(
-                message.content.split()) == 1:
-            prefix = (await self._get_prefix(self, message))[0]
-            embed = discord.Embed(
-                title="👋 Hello!",
-                description=
-                f"My prefix is `{prefix}`\nUse `{prefix}help` or `/help` to see commands!",
-                color=discord.Color.blue())
-            await message.reply(embed=embed, mention_author=False)
-            return
-
         await self.process_commands(message)
 
     async def process_commands(self, message: discord.Message):
