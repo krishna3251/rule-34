@@ -80,6 +80,20 @@ class MikoOrchestrator:
         if not decision.respond:
             return MikoResult(False, reason=decision.reason)
 
+        normalized_prompt = decision.prompt.casefold().strip()
+        if normalized_prompt in {
+            "forget me",
+            "forget my memory",
+            "delete my memory",
+            "delete my data",
+        }:
+            self.forget_user(message.author.id)
+            return MikoResult(
+                True,
+                "Your stored Miko memory and profile have been deleted.",
+                reason="forget_request",
+            )
+
         if decision.prompt.casefold() in {
             "stop flirting",
             "stop flirting please",
