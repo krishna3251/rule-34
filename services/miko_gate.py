@@ -110,6 +110,29 @@ class MikoGate:
             level = 1
         return level
 
+    async def is_candidate(
+        self,
+        message: Any,
+        bot: Any,
+        auto_chat: bool,
+        quiet: bool = False,
+    ) -> bool:
+        if getattr(message.author, "bot", False):
+            return False
+
+        try:
+            ctx = await bot.get_context(message)
+            if ctx.valid:
+                return False
+        except Exception:
+            logger.debug("Unable to resolve command context", exc_info=True)
+
+        _, summoned = self._extract_trigger(message, bot)
+        if quiet and not summoned:
+            return False
+
+        return summoned or auto_chat
+
     async def check(
         self,
         message: Any,
