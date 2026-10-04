@@ -286,10 +286,15 @@ Context Builder
   └── recent memory
       |
       v
-Groq Agent
+OpenRouter Agent (primary)
   ├── natural-language understanding
-  ├── built-in live browser search
+  ├── live web search via openrouter:web_search
   └── guarded Discord command tools
+      |
+      └── Groq Agent (backup)
+          ├── natural-language understanding
+          ├── live browser search
+          └── guarded Discord command tools
       |
       v
 Local Tool Loop
@@ -348,6 +353,12 @@ Groq's GPT-OSS models support built-in browser search, so Miko can use live web 
 ### Miko Environment
 
 ~~~text
+OPENROUTER_API_KEY=
+OPENROUTER_MODEL=openai/gpt-4o-mini
+OPENROUTER_SITE_URL=
+OPENROUTER_APP_TITLE=Miko Discord Bot
+
+# Groq backup
 GROQ_API_KEY=
 GROQ_MODEL=openai/gpt-oss-20b
 
@@ -360,6 +371,8 @@ MIKO_REASONING_EFFORT=low
 MIKO_MAX_TOOL_ITERATIONS=3
 MIKO_MAX_TOOL_CALLS=3
 ~~~
+
+Miko uses OpenRouter as the primary chat provider and automatically falls back to Groq when the primary request fails. OpenRouter's API is OpenAI-compatible, and its server-side <code>openrouter:web_search</code> tool can be combined with normal user-defined function tools. citeturn387565search1turn387565search0turn387565search5
 
 The Miko services live under:
 
