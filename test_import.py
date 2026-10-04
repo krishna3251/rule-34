@@ -1,6 +1,11 @@
-import sys, os
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'vendor'))
-import google.generativeai as genai
-print("google.generativeai OK:", genai.__version__ if hasattr(genai, '__version__') else "imported")
-import aiosqlite
-print("aiosqlite OK:", aiosqlite.__version__)
+from google import genai
+from google.genai import types
+
+print("google.genai OK:", genai.__name__)
+print("GenerateContentConfig OK:", types.GenerateContentConfig.__name__)
+
+try:
+    import aiosqlite
+    print("aiosqlite OK:", getattr(aiosqlite, "__version__", "imported"))
+except ImportError as exc:
+    print("aiosqlite import failed:", exc)
