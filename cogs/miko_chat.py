@@ -77,6 +77,31 @@ class MikoChat(commands.Cog):
         except OSError as exc:
             logger.error("Could not save Miko configuration: %s", exc)
 
+    def _emotion_file(self, emotion_id: int) -> Path | None:
+        path = self.orchestrator.emotion.image_path(emotion_id)
+        return path if path.is_file() else None
+
+    async def _reply_with_emotion(
+        self,
+        message: discord.Message,
+        text: str,
+        emotion_id: int,
+    ) -> None:
+        image_path = self._emotion_file(emotion_id)
+        if image_path is None:
+            await message.reply(text, mention_author=False)
+            return
+
+        file = discord.File(
+            image_path,
+            filename=f"miko_{emotion_id:02d}.webp",
+        )
+        await message.reply(
+            text,
+            file=file,
+            mention_author=False,
+        )
+
     async def _handle_message(self, message: discord.Message) -> None:
         if message.author.bot:
             return
@@ -97,7 +122,11 @@ class MikoChat(commands.Cog):
         )
 
         if result.replied and result.text:
-            await message.reply(result.text, mention_author=False)
+            await self._reply_with_emotion(
+                message,
+                result.text,
+                result.emotion_id,
+            )
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
@@ -132,7 +161,11 @@ class MikoChat(commands.Cog):
             )
 
         if result.replied and result.text:
-            await message.reply(result.text, mention_author=False)
+            await self._reply_with_emotion(
+                message,
+                result.text,
+                result.emotion_id,
+            )
 
     @commands.command(name="mikosetchat", aliases=["setchat"])
     @commands.has_permissions(administrator=True)
@@ -321,7 +354,26 @@ class MikoChat(commands.Cog):
             getattr(ctx.guild, "id", None),
             ctx.channel.id,
         )
-        await ctx.send(cleaned)
+
+        emotion = self.orchestrator.emotion.analyze(
+            question,
+            cleaned,
+            mood="serious" if intent == "serious" else "playful",
+            intent=intent,
+            spice_level=level,
+        )
+        image_path = self._emotion_file(emotion.id)
+        if image_path is None:
+            await ctx.send(cleaned)
+            return
+
+        await ctx.send(
+            cleaned,
+            file=discord.File(
+                image_path,
+                filename=f"miko_{emotion.id:02d}.webp",
+            ),
+        )
 
 
     @app_commands.command(name="mikosetchat", description="Set Miko auto-chat in a channel")
@@ -509,7 +561,26 @@ class MikoChat(commands.Cog):
             interaction.guild_id,
             interaction.channel_id,
         )
-        await interaction.followup.send(cleaned)
+
+        emotion = self.orchestrator.emotion.analyze(
+            question,
+            cleaned,
+            mood="serious" if intent == "serious" else "playful",
+            intent=intent,
+            spice_level=level,
+        )
+        image_path = self._emotion_file(emotion.id)
+        if image_path is None:
+            await interaction.followup.send(cleaned)
+            return
+
+        await interaction.followup.send(
+            cleaned,
+            file=discord.File(
+                image_path,
+                filename=f"miko_{emotion.id:02d}.webp",
+            ),
+        )
 
 
 async def setup(bot: commands.Bot):
