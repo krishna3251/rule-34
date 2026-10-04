@@ -10,6 +10,7 @@ from services.miko_ai import MikoAI
 from services.miko_context import MikoContextBuilder
 from services.miko_gate import MikoGate
 from services.miko_memory import MikoMemory
+from services.miko_emotion import MikoEmotion, MikoEmotionEngine
 from services.miko_profile import MikoProfile
 from services.miko_response import MikoResponseProcessor
 from services.miko_router import MikoRouter
@@ -23,6 +24,8 @@ class MikoResult:
     replied: bool
     text: str | None = None
     reason: str = ""
+    emotion_id: int = 1
+    emotion: str = "Neutral"
 
 
 class MikoOrchestrator:
@@ -31,6 +34,7 @@ class MikoOrchestrator:
     def __init__(self) -> None:
         self.gate = MikoGate()
         self.memory = MikoMemory()
+        self.emotion = MikoEmotionEngine()
         self.profile = MikoProfile()
         self.router = MikoRouter()
         self.context = MikoContextBuilder()
@@ -310,7 +314,27 @@ class MikoOrchestrator:
             message.channel.id,
         )
 
-        return MikoResult(True, cleaned, reason=decision.reason)
+        emotion = self.emotion.analyze(
+            decision.prompt,
+            cleaned,
+            mood=decision.mood,
+            intent=intent,
+            spice_level=decision.spice_level,
+        )
+        logger.debug(
+            "Miko emotion selected id=%02d name=%s reason=%s",
+            emotion.id,
+            emotion.name,
+            emotion.reason,
+        )
+
+        return MikoResult(
+            True,
+            cleaned,
+            reason=decision.reason,
+            emotion_id=emotion.id,
+            emotion=emotion.name,
+        )
 
     @property
     def ai_ready(self) -> bool:
