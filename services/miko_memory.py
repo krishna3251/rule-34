@@ -10,12 +10,7 @@ logger = logging.getLogger("discord_bot")
 
 
 class MikoMemory:
-    """Rukiya-style dual-scope short-term memory.
-
-    Scope 1: user memory keeps recent conversation with Miko.
-    Scope 2: conversation memory keeps the latest context for a guild/channel session.
-    Both scopes expire after 30 minutes and persist to disk.
-    """
+    """Rukiya-style dual-scope short-term memory."""
 
     MEMORY_DURATION = 30 * 60
     MAX_MESSAGES = 10
@@ -38,6 +33,7 @@ class MikoMemory:
                 self.users = raw.get("users", {}) or {}
                 self.conversations = raw.get("conversations", {}) or {}
             else:
+                # Backward compatibility with the old flat user-memory format.
                 self.users = raw if isinstance(raw, dict) else {}
                 self.conversations = {}
             self._prune_expired(save=False)
@@ -83,7 +79,11 @@ class MikoMemory:
             self.save()
 
     @staticmethod
-    def conversation_key(guild_id: int | None, channel_id: int, user_id: int) -> str:
+    def conversation_key(
+        guild_id: int | None,
+        channel_id: int,
+        user_id: int,
+    ) -> str:
         return f"{guild_id or 0}:{channel_id}:{user_id}"
 
     def add(
@@ -103,7 +103,8 @@ class MikoMemory:
 
         user_key = str(user_id)
         user_bucket = self.users.setdefault(
-            user_key, {"messages": [], "timestamp": now}
+            user_key,
+            {"messages": [], "timestamp": now},
         )
         user_bucket["timestamp"] = now
         user_bucket["messages"].append(entry)
@@ -112,7 +113,8 @@ class MikoMemory:
         if channel_id is not None:
             conv_key = self.conversation_key(guild_id, channel_id, user_id)
             conv_bucket = self.conversations.setdefault(
-                conv_key, {"messages": [], "timestamp": now}
+                conv_key,
+                {"messages": [], "timestamp": now},
             )
             conv_bucket["timestamp"] = now
             conv_bucket["messages"].append(entry)
@@ -145,8 +147,19 @@ class MikoMemory:
         channel_id: int | None = None,
     ) -> None:
         self.users.pop(str(user_id), None)
+
         if channel_id is not None:
             self.conversations.pop(
-                self.conversation_key(guild_id, channel_id, user_id), None
+                self.conversation_key(guild_id, channel_id, user_id),
+                None,
             )
+        else:
+            # "Forget me" must remove every conversation scope for this user.
+            suffix = f":{user_id}"
+            self.conversations = {
+                key: value
+                for key, value in self.conversations.items()
+                if not key.endswith(suffix)
+            }
+
         self.save()
