@@ -114,7 +114,7 @@ class MikoAI:
                     temperature=temp,
                 )
             except Exception as exc:
-                logger.warning("OpenRouter failed; using Groq: %s", exc, exc_info=True)
+                logger.warning("Miko OpenRouter primary failed; using Groq backup: %s", exc, exc_info=True)
 
         if self.groq_client:
             try:
