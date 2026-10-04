@@ -250,6 +250,114 @@ The bot also includes operational tooling for hosted deployments:
 - Environment-variable configuration
 - Extension discovery
 
+
+
+## 🌸 Miko AI Chat Architecture
+
+Rule43 includes a modular Miko conversational system built around a Rukiya-style orchestration pattern.
+
+~~~text
+Discord Message
+      |
+      v
+MikoChat Cog
+      |
+      v
+Miko Orchestrator
+      |
+      v
+Gatekeeper
+  ├── bot / command filtering
+  ├── Miko trigger detection
+  ├── rate limiting
+  └── safety pre-check
+      |
+      v
+Memory Manager
+  ├── user memory
+  └── guild/channel conversation memory
+      |
+      v
+Context Builder
+  ├── personality
+  ├── mood
+  ├── intent
+  ├── channel level
+  └── recent memory
+      |
+      v
+Groq AI Service
+      |
+      v
+Response Processor
+  ├── output validation
+  ├── prompt-leak check
+  ├── length / formatting checks
+  └── retry / fallback
+      |
+      v
+Memory Write
+      |
+      v
+Discord Response
+~~~
+
+The Discord cog is intentionally kept as an adapter. The Orchestrator coordinates the pipeline, while Gatekeeper, Memory, Context, AI, Personality, Routing, Profile, and Response Processing remain separate services.
+
+### Miko Configuration
+
+The Miko system supports direct summons such as:
+
+~~~text
+miko hello
+@miko hello
+~~~
+
+and an optional configured auto-chat channel.
+
+Admin controls use the bot command prefix:
+
+~~~text
+miko!mikosetchat
+miko!mikounsetchat
+miko!mikosetlevel 0
+miko!mikosetlevel 1
+miko!mikosetlevel 2
+miko!mikoquiet
+miko!mikodisabled
+miko!mikoenabled
+miko!mikochatinfo
+~~~
+
+Level 2 is restricted to age-restricted Discord channels and remains non-explicit. The system also supports user memory reset/forget controls and lightweight safety checks before and after AI generation.
+
+### Miko Environment
+
+~~~text
+GROQ_API_KEY=
+GROQ_MODEL=openai/gpt-oss-20b
+
+MIKO_USER_COOLDOWN=1.0
+MIKO_CHANNEL_COOLDOWN=0.35
+MIKO_AI_CONCURRENCY=3
+MIKO_DAILY_QUOTA=450
+~~~
+
+The Miko services live under:
+
+~~~text
+services/
+├── miko_orchestrator.py
+├── miko_gate.py
+├── miko_memory.py
+├── miko_context.py
+├── miko_personality.py
+├── miko_router.py
+├── miko_ai.py
+├── miko_response.py
+└── miko_profile.py
+~~~
+
 ---
 
 ## 🛠️ Setup
