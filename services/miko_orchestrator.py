@@ -34,6 +34,21 @@ class MikoOrchestrator:
         self.ai = MikoAI()
         self.response = MikoResponseProcessor()
 
+    async def is_candidate(
+        self,
+        message: Any,
+        bot: Any,
+        *,
+        auto_chat: bool = False,
+        quiet: bool = False,
+    ) -> bool:
+        return await self.gate.is_candidate(
+            message,
+            bot,
+            auto_chat=auto_chat,
+            quiet=quiet,
+        )
+
     async def handle(
         self,
         message: Any,
