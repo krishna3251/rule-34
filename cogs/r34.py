@@ -5,6 +5,7 @@ import aiohttp
 import os
 import random
 import asyncio
+import time
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 from typing import Optional
@@ -31,7 +32,7 @@ class NSFWContent(commands.Cog):
 
         # API endpoints with fallback
         self.apis = {
-            "r34": ["https://api.rule34.xxx/index.php", "https://rule34.xxx/index.php"],
+            "r34": ["https://api.rule34.xxx/index.php"],
             "gel": ["https://gelbooru.com/index.php"],
             "dan": ["https://danbooru.donmai.us/posts.json"],
             "paheal": ["https://rule34.paheal.net/api/danbooru/find_posts/index.xml"]
@@ -40,6 +41,7 @@ class NSFWContent(commands.Cog):
         # Content filters
         self.blocked = {'gay', 'yaoi', 'male_on_male', 'femboy', 'trap', 
                        'futa', 'futanari', 'dickgirl', 'shemale'}
+        self.backoff_until = defaultdict(float)
 
     async def cog_load(self):
         self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=8))
@@ -62,22 +64,7 @@ class NSFWContent(commands.Cog):
         return bool(tag_set & self.blocked)
 
     async def parse_tags(self, query):
-        """Parse query with AI fallback"""
-        if self.gemini_key:
-            try:
-                async with self.session.post(
-                    "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent",
-                    params={"key": self.gemini_key},
-                    json={"contents": [{"parts": [{"text": f"Convert to Rule34 tags: {query}"}]}]},
-                    timeout=3
-                ) as r:
-                    if r.status == 200:
-                        data = await r.json()
-                        if data.get("candidates"):
-                            return data["candidates"][0]["content"]["parts"][0]["text"].strip().lower()
-            except:
-                pass
-        return query.lower().replace(" ", "_")
+        return query.strip().lower().replace(' ', '_')
 
     async def fetch_content(self, tags="", limit=30, source="r34"):
         """Fetch with multi-source fallback"""
@@ -102,33 +89,27 @@ class NSFWContent(commands.Cog):
                     self.cache[cache_key] = (datetime.now(), posts)
                     return posts
 
-        # Final fallback: random explicit content
-        if tags != "rating:explicit":
-            return await self.fetch_content("rating:explicit", 10, "r34")
         return []
 
     async def _fetch_from_source(self, tags, limit, source):
-        """Fetch from specific source"""
-        endpoints = self.apis.get(source, self.apis["r34"])
-
-        for endpoint in endpoints:
+        if time.monotonic() < self.backoff_until[source]:
+            return []
+        for endpoint in self.apis.get(source, []):
             try:
                 params = self._build_params(tags, limit, source)
-                async with self.session.get(endpoint, params=params) as r:
-                    if r.status == 200:
-                        data = await r.json(content_type=None)
-
-                        # Handle different response formats
-                        if source == "dan":
-                            posts = data if isinstance(data, list) else []
-                        else:
-                            posts = data if isinstance(data, list) else data.get("post", [])
-
-                        # Filter content
-                        filtered = [p for p in posts if not self.is_filtered(p.get("tags", ""))]
-                        if filtered:
-                            return filtered[:limit]
-            except:
+                async with self.session.get(endpoint, params=params) as response:
+                    if response.status != 200:
+                        if response.status in (403, 429):
+                            self.backoff_until[source] = time.monotonic() + 120
+                        return []
+                    data = await response.json(content_type=None)
+                    if source == 'dan':
+                        posts = data if isinstance(data, list) else []
+                    else:
+                        posts = data if isinstance(data, list) else data.get('post', [])
+                    filtered = [p for p in posts if not self.is_filtered(p.get('tags', ''))]
+                    return filtered[:limit]
+            except (aiohttp.ClientError, asyncio.TimeoutError, ValueError, TypeError):
                 continue
         return []
 
