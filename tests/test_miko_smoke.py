@@ -68,14 +68,14 @@ class RepositorySmokeTests(unittest.TestCase):
 
     def test_miko_provider_stack(self):
         source = (ROOT / "services/miko_ai.py").read_text(encoding="utf-8")
-        orchestrator = (ROOT / "services/miko_orchestrator.py").read_text(encoding="utf-8")
+        engine = (ROOT / "services/miko_chat_engine.py").read_text(encoding="utf-8")
         self.assertIn("OPENROUTER_API_KEY", source)
         self.assertIn("OpenRouter", source)
         self.assertIn("using Groq backup", source)
         self.assertIn("GROQ_API_KEY", source)
         self.assertIn("openrouter:web_search", source)
-        self.assertIn("def provider(self) -> str:", orchestrator)
-        self.assertIn("return self.ai.provider", orchestrator)
+        self.assertIn("def provider(self) -> str:", engine)
+        self.assertIn("return self.ai.provider", engine)
 
     def test_miko_agent_tools_exist(self):
         source = (ROOT / "services/miko_tools.py").read_text(encoding="utf-8")
@@ -122,11 +122,11 @@ class RepositorySmokeTests(unittest.TestCase):
         self.assertIn('f"{emotion_id:02d}.webp"', emotion)
 
     def test_miko_result_carries_emotion(self):
-        source = (ROOT / "services/miko_orchestrator.py").read_text(encoding="utf-8")
+        source = (ROOT / "services/miko_chat_engine.py").read_text(encoding="utf-8")
         chat = (ROOT / "cogs/miko_chat.py").read_text(encoding="utf-8")
         self.assertIn("emotion_id: int = 1", source)
         self.assertIn("emotion_id=emotion.id", source)
-        self.assertIn("miko_{emotion.id:02d}.webp", chat)
+        self.assertIn("miko_{result.emotion_id:02d}", chat)
         self.assertIn("discord.File", chat)
 
     def test_miko_command_bridges(self):
