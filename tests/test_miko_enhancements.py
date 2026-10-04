@@ -54,7 +54,7 @@ class MikoEnhancementTests(unittest.TestCase):
         engine = MikoSocialEngine()
         self.assertAlmostEqual(engine.temperature("chat", "playful", 0), 0.88)
         self.assertAlmostEqual(engine.temperature("gaming", "happy", 0), 0.95)
-        self.assertAlmostEqual(engine.temperature("serious", "serious", 0), 0.42 if False else 0.45)
+        self.assertAlmostEqual(engine.temperature("serious", "serious", 0), 0.45)
         self.assertGreaterEqual(engine.temperature("serious", "serious", 0), 0.45)
         self.assertLessEqual(engine.temperature("chat", "happy", 999), 0.98)
 
