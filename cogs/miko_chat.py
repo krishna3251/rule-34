@@ -25,6 +25,7 @@ class MikoChat(commands.Cog):
         self.quiet_channels: set[int] = set()
         self.channel_levels: dict[int, int] = {}
         self.orchestrator = MikoOrchestrator()
+        self.orchestrator.bind_chat_cog(self)
 
         self.load_data()
 
@@ -225,6 +226,8 @@ class MikoChat(commands.Cog):
             f"Auto-chat: {channel.mention if channel else 'Not configured'}\n"
             f"AI: {'Groq connected' if self.orchestrator.ai_ready else 'Groq not configured'}\n"
             f"Model: {self.orchestrator.model}\n"
+            f"Live web: {'enabled' if self.orchestrator.web_search_ready else 'unavailable'}\n"
+            f"Agent tools: {len(self.orchestrator.tool_names)}\n"
             "Memory: 30 min / last 10 messages\n"
             f"Channel level: {level}\n"
             f"Disabled: {disabled}\n"
