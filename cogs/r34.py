@@ -24,6 +24,7 @@ class NSFWContent(commands.Cog):
         self.favs = defaultdict(list)
         self.cache = {}
         self.limits = defaultdict(lambda: datetime.min)
+        self.backoff_until = defaultdict(float)
 
         # API keys
         self.r34_user = os.getenv("R34_USER_ID")
@@ -137,7 +138,8 @@ class NSFWContent(commands.Cog):
         # Get image URL with fallbacks
         url = post.get("sample_url" if safe else "file_url") or \
               post.get("file_url") or post.get("image") or ""
-        e.set_image(url=url)
+        if url:
+            e.set_image(url=url)
 
         # Add metadata
         tags = " ".join([f"`{t}`" for t in post.get("tags", "").split()[:8]])
