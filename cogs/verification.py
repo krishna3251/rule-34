@@ -579,6 +579,19 @@ class VerificationCog(commands.Cog):
 
     # ===== SLASH COMMANDS =====
 
+    @app_commands.command(name="verification_stats", description="Show verification statistics")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def verification_stats_slash(self, interaction: discord.Interaction):
+        try:
+            stats = self.db.get_verification_stats()
+            embed = discord.Embed(title="📊 Verification Statistics", color=discord.Color.blue())
+            embed.add_field(name="✅ Total Verified Users", value=str(stats.get("total_verified", 0)), inline=True)
+            embed.add_field(name="🔄 Pending Verifications", value=str(len(self.pending_verifications)), inline=True)
+            embed.add_field(name="🚫 Failed Attempts (24h)", value=str(stats.get("failed_24h", 0)), inline=True)
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+        except Exception as exc:
+            logger.error("Error in verification_stats slash: %s", exc)
+            await interaction.response.send_message("❌ Error retrieving verification statistics.", ephemeral=True)
     @app_commands.command(name="verify", description="Verify your age to access this server")
     async def verify_slash(self, interaction: discord.Interaction):
         """Slash version of age verification"""
@@ -639,7 +652,7 @@ class VerificationCog(commands.Cog):
             color=discord.Color.green() if verified else discord.Color.red())
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @app_commands.command(name="force_verify_slash", description="Force verify a user (Admin only)")
+    @app_commands.command(name="force_verify", description="Force verify a user (Admin only)")
     @app_commands.default_permissions(administrator=True)
     async def force_verify_slash(self, interaction: discord.Interaction, member: discord.Member):
         try:
