@@ -26,7 +26,6 @@ class NSFWContent(commands.Cog):
         self.limits = defaultdict(lambda: datetime.min)
 
         # API keys
-        self.gemini_key = os.getenv("GEMINI_API_KEY")
         self.r34_user = os.getenv("R34_USER_ID")
         self.r34_key = os.getenv("R34_API_KEY")
 
@@ -34,8 +33,7 @@ class NSFWContent(commands.Cog):
         self.apis = {
             "r34": ["https://api.rule34.xxx/index.php"],
             "gel": ["https://gelbooru.com/index.php"],
-            "dan": ["https://danbooru.donmai.us/posts.json"],
-            "paheal": ["https://rule34.paheal.net/api/danbooru/find_posts/index.xml"]
+            "dan": ["https://danbooru.donmai.us/posts.json"]
         }
 
         # Content filters
