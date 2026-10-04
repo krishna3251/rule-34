@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import time
+import random
 from pathlib import Path
 from typing import Dict
 
@@ -144,18 +145,72 @@ class MikoChat(commands.Cog):
             logger.error('Miko Groq request failed: %s', exc, exc_info=True)
             return '⚠️ My connection to the shrine is misbehaving. Try again shortly.'
 
+    def _strip_miko_trigger(self, message: discord.Message):
+        """Return the message text after a direct Miko summon, or None if not summoned."""
+        content = message.content.strip()
+        bot_user = self.bot.user
+
+        if bot_user:
+            for token in (f'<@{bot_user.id}>', f'<@!{bot_user.id}>'):
+                if token in content:
+                    content = content.replace(token, '').strip()
+                    return content
+
+        lowered = content.casefold()
+        trigger_prefixes = ('miko ', 'miko,', 'miko:', 'miko -')
+        if lowered == 'miko':
+            return ''
+        for prefix in trigger_prefixes:
+            if lowered.startswith(prefix):
+                return content[len(prefix):].strip(' ,:~-')
+        return None
+
+    async def _is_command(self, message: discord.Message) -> bool:
+        """Prevent Miko chat from answering real bot commands."""
+        try:
+            ctx = await self.bot.get_context(message)
+            return bool(ctx.valid)
+        except Exception:
+            return False
+
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
-        if message.author.bot or not message.guild:
+        """Rukiya-style chat: respond when Miko is explicitly called, plus optional auto-chat channel."""
+        if message.author.bot:
             return
-        if self.chat_channels.get(message.guild.id) != message.channel.id:
+
+        if await self._is_command(message):
             return
+
+        summoned_text = self._strip_miko_trigger(message)
+        auto_chat = (
+            bool(message.guild)
+            and self.chat_channels.get(message.guild.id) == message.channel.id
+        )
+
+        if summoned_text is None and not auto_chat:
+            return
+
         if not self.should_respond(message.author.id):
+            logger.debug('Skipping Miko response for %s due to cooldown', message.author.id)
             return
-        self.add_memory(message.author.id, 'user', message.content)
+
+        prompt = summoned_text if summoned_text is not None else message.content
+        if not prompt:
+            prompt = (
+                'The user has just summoned you by saying your name. '
+                'Give a short, warm Yae Miko-style greeting and invite them to talk.'
+            )
+
+        self.add_memory(message.author.id, 'user', prompt)
+
         async with message.channel.typing():
-            reply = await self.generate(message.author.id, message.content)
+            reply = await self.generate(message.author.id, prompt)
+
         self.add_memory(message.author.id, 'assistant', reply)
+
+        # Small human-like pause, without blocking the event loop.
+        await asyncio.sleep(random.uniform(0.4, 1.2))
         await message.reply(reply, mention_author=False)
 
     @commands.command(name='mikosetchat')
