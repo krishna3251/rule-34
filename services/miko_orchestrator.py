@@ -317,6 +317,10 @@ class MikoOrchestrator:
         return self.ai.ready
 
     @property
+    def provider(self) -> str:
+        return self.ai.provider
+
+    @property
     def model(self) -> str:
         return self.ai.model
 
