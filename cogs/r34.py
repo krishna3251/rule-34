@@ -300,6 +300,57 @@ class NSFWContent(commands.Cog):
         self.favs[uid].clear()
         await ctx.send(f"🗑️ Cleared {cnt} favorites.")
 
+
+    async def _send_slash_post(self, inter: discord.Interaction, tags: str = "", title: str = "Result"):
+        if not inter.channel or not inter.channel.is_nsfw():
+            await inter.response.send_message("❌ NSFW channel required!", ephemeral=True)
+            return
+        if not self.rate_check(inter.user.id):
+            await inter.response.send_message("⏱️ Wait 2 seconds!", ephemeral=True)
+            return
+        await inter.response.defer()
+        posts = await self.fetch_content(tags or "rating:explicit")
+        if not posts:
+            await inter.followup.send("❌ No results found. Try different tags.")
+            return
+        await inter.followup.send(embed=self.make_embed(random.choice(posts), title))
+
+    @app_commands.command(name="r34", description="🔞 Search NSFW content")
+    @app_commands.describe(tags="Search tags")
+    async def r34_slash(self, inter: discord.Interaction, tags: str = ""):
+        await self._send_slash_post(inter, tags, "Result")
+
+    @app_commands.command(name="r34random", description="🎲 Random NSFW content")
+    async def r34random_slash(self, inter: discord.Interaction):
+        await self._send_slash_post(inter, "rating:explicit sort:random", "Random")
+
+    @app_commands.command(name="r34girl", description="🔞 Female anime content")
+    async def r34girl_slash(self, inter: discord.Interaction):
+        await self._send_slash_post(inter, "rating:explicit 1girl solo", "Girl")
+
+    @app_commands.command(name="r34anime", description="🔞 Anime content")
+    async def r34anime_slash(self, inter: discord.Interaction):
+        await self._send_slash_post(inter, "rating:explicit anime", "Anime")
+
+    @app_commands.command(name="r34milf", description="🔞 Mature female anime content")
+    async def r34milf_slash(self, inter: discord.Interaction):
+        await self._send_slash_post(inter, "rating:explicit milf", "MILF")
+
+    @app_commands.command(name="r34hentai", description="🔞 Hentai content")
+    async def r34hentai_slash(self, inter: discord.Interaction):
+        await self._send_slash_post(inter, "rating:explicit hentai", "Hentai")
+
+    @app_commands.command(name="r34furry", description="🔞 Furry content")
+    async def r34furry_slash(self, inter: discord.Interaction):
+        await self._send_slash_post(inter, "rating:explicit furry", "Furry")
+
+    @app_commands.command(name="r34help", description="Show NSFW command help")
+    async def r34help_slash(self, inter: discord.Interaction):
+        embed = discord.Embed(title="🔞 NSFW Bot Commands", color=0x8B00FF)
+        embed.add_field(name="Search", value="/nsfw [q] · /r34 [tags] · /r34anime · /r34girl · /r34hentai · /r34furry", inline=False)
+        embed.add_field(name="Utility", value="/random · /r34random · /trending · /fav", inline=False)
+        embed.set_footer(text="Use these commands in NSFW channels only.")
+        await inter.response.send_message(embed=embed, ephemeral=True)
     @commands.command(name="r34help")
     async def help_cmd(self, ctx):
         """Help command"""
