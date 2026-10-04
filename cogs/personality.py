@@ -15,6 +15,11 @@ class PersonalityCog(commands.Cog):
     async def mood(self, interaction: discord.Interaction) -> None:
         await interaction.response.send_message(MikoPersonality.reply_to('tease'))
 
+    @commands.command(name="mood")
+    async def mood_prefix(self, ctx: commands.Context) -> None:
+        """Prefix version of the mood command."""
+        await ctx.send(MikoPersonality.reply_to("tease"))
+
     # Miko chat is handled by cogs.miko_chat using Groq and persistent memory.
     # Keep this cog command-only so mentions do not produce duplicate replies.
 
