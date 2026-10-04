@@ -10,7 +10,7 @@ from services.miko_ai import MikoAI
 from services.miko_context import MikoContextBuilder
 from services.miko_gate import MikoGate
 from services.miko_memory import MikoMemory
-from services.miko_emotion import MikoEmotion, MikoEmotionEngine
+from services.miko_emotion import MikoEmotionEngine
 from services.miko_profile import MikoProfile
 from services.miko_response import MikoResponseProcessor
 from services.miko_router import MikoRouter
@@ -42,25 +42,19 @@ class MikoOrchestrator:
         self.response = MikoResponseProcessor()
         self.tools = MikoToolRegistry()
         self.miko_chat: Any | None = None
+        self.turn_counts: dict[str, int] = {}
 
         try:
-            self.max_tool_iterations = max(
-                1,
-                min(int(os.getenv("MIKO_MAX_TOOL_ITERATIONS", "3")), 5),
-            )
+            self.max_tool_iterations = max(1, min(int(os.getenv("MIKO_MAX_TOOL_ITERATIONS", "3")), 5))
         except (TypeError, ValueError):
             self.max_tool_iterations = 3
 
         try:
-            self.max_tool_calls = max(
-                1,
-                min(int(os.getenv("MIKO_MAX_TOOL_CALLS", "3")), 8),
-            )
+            self.max_tool_calls = max(1, min(int(os.getenv("MIKO_MAX_TOOL_CALLS", "3")), 8))
         except (TypeError, ValueError):
             self.max_tool_calls = 3
 
     def bind_chat_cog(self, cog: Any) -> None:
-        """Bind the Discord adapter for future Miko-specific tool extensions."""
         self.miko_chat = cog
 
     async def is_candidate(
@@ -71,12 +65,18 @@ class MikoOrchestrator:
         auto_chat: bool = False,
         quiet: bool = False,
     ) -> bool:
-        return await self.gate.is_candidate(
-            message,
-            bot,
-            auto_chat=auto_chat,
-            quiet=quiet,
-        )
+        return await self.gate.is_candidate(message, bot, auto_chat=auto_chat, quiet=quiet)
+
+    def _conversation_key(self, message: Any) -> str:
+        return f"{getattr(message.guild, 'id', 0) or 0}:{message.channel.id}"
+
+    def _next_turn(self, key: str) -> int:
+        value = self.turn_counts.get(key, 0) + 1
+        self.turn_counts[key] = value
+        return value
+
+    def _adaptive_temperature(self, intent: str, mood: str, turn: int) -> float:
+        return self.context.social.temperature(intent, mood, turn)
 
     async def _agent_generate(
         self,
@@ -87,12 +87,11 @@ class MikoOrchestrator:
         allow_actions: bool,
         strict: bool = False,
         allow_web: bool = True,
+        temperature: float | None = None,
     ) -> tuple[str, bool]:
-        """Run bounded local-tool automation plus Groq's server-side web search."""
         working = list(messages)
         used_web = False
         total_tool_calls = 0
-
         tool_schemas = self.tools.schemas()
 
         for _ in range(self.max_tool_iterations):
@@ -101,27 +100,18 @@ class MikoOrchestrator:
                 tool_schemas=tool_schemas,
                 allow_web=allow_web,
                 strict=strict,
+                temperature=temperature,
             )
             used_web = used_web or ai_result.web_search_used
 
             if not ai_result.tool_calls:
                 return ai_result.text.strip(), used_web
 
-            if (
-                total_tool_calls + len(ai_result.tool_calls)
-                > self.max_tool_calls
-            ):
-                logger.warning(
-                    "Miko tool-call budget exceeded user=%s",
-                    getattr(message.author, "id", None),
-                )
-                return (
-                    "I stopped the automation before it could run too many actions.",
-                    used_web,
-                )
+            if total_tool_calls + len(ai_result.tool_calls) > self.max_tool_calls:
+                logger.warning("Miko tool-call budget exceeded user=%s", getattr(message.author, "id", None))
+                return "I stopped the automation before it could run too many actions.", used_web
 
             working.append(ai_result.assistant_message)
-
             for call in ai_result.tool_calls:
                 name = str(call.get("name") or "")
                 arguments = call.get("arguments") or {}
@@ -131,31 +121,20 @@ class MikoOrchestrator:
                     miko_chat=self.miko_chat,
                     allow_actions=allow_actions,
                 )
-
                 result = await self.tools.execute(
                     name,
                     arguments if isinstance(arguments, dict) else {},
                     context,
                 )
                 total_tool_calls += 1
+                working.append({
+                    "role": "tool",
+                    "tool_call_id": str(call.get("id") or ""),
+                    "name": name,
+                    "content": json.dumps(result, ensure_ascii=False, default=str)[:5000],
+                })
 
-                working.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": str(call.get("id") or ""),
-                        "name": name,
-                        "content": json.dumps(
-                            result,
-                            ensure_ascii=False,
-                            default=str,
-                        )[:5000],
-                    }
-                )
-
-        return (
-            "I stopped after reaching the automation limit for this request.",
-            used_web,
-        )
+        return "I stopped after reaching the automation limit for this request.", used_web
 
     async def handle(
         self,
@@ -189,34 +168,26 @@ class MikoOrchestrator:
             return MikoResult(False, reason=decision.reason)
 
         normalized_prompt = decision.prompt.casefold().strip()
-        if normalized_prompt in {
-            "forget me",
-            "forget my memory",
-            "delete my memory",
-            "delete my data",
-        }:
+        if normalized_prompt in {"forget me", "forget my memory", "delete my memory", "delete my data"}:
             self.forget_user(message.author.id)
-            return MikoResult(
-                True,
-                "Your stored Miko memory and profile have been deleted.",
-                reason="forget_request",
-            )
+            return MikoResult(True, "Your stored Miko memory and profile have been deleted.", reason="forget_request")
 
-        if decision.prompt.casefold() in {
-            "stop flirting",
-            "stop flirting please",
-            "don't flirt",
-            "dont flirt",
-        }:
+        if normalized_prompt in {"stop flirting", "stop flirting please", "don't flirt", "dont flirt"}:
             self.profile.set(message.author.id, "level_cap", 0)
             decision.spice_level = 0
             decision.mood = "serious"
 
-        history = self.memory.history(
-            message.author.id,
-            getattr(message.guild, "id", None),
-            message.channel.id,
+        guild_id = getattr(message.guild, "id", None)
+        channel_id = message.channel.id
+        conversation_key = self._conversation_key(message)
+        turn = self._next_turn(conversation_key)
+        display_name = (
+            getattr(message.author, "display_name", None)
+            or getattr(message.author, "name", None)
+            or "User"
         )
+
+        history = self.memory.history(message.author.id, guild_id, channel_id)
         intent = self.router.classify(decision.prompt)
         profile = self.profile.get(message.author.id)
 
@@ -224,8 +195,9 @@ class MikoOrchestrator:
             message.author.id,
             "user",
             decision.prompt,
-            getattr(message.guild, "id", None),
-            message.channel.id,
+            guild_id,
+            channel_id,
+            name=display_name,
         )
 
         messages = self.context.build(
@@ -236,12 +208,13 @@ class MikoOrchestrator:
             intent=intent,
             profile=profile,
             strict=decision.reason == "safety_refusal",
+            user_name=display_name,
+            conversation_key=conversation_key,
+            turn_count=turn,
         )
 
-        allow_actions = (
-            decision.reason == "summoned"
-            and decision.reason != "safety_refusal"
-        )
+        temperature = self._adaptive_temperature(intent, decision.mood, turn)
+        allow_actions = decision.reason == "summoned"
 
         await self.gate.acquire_ai_slot()
         try:
@@ -252,6 +225,7 @@ class MikoOrchestrator:
                 allow_actions=allow_actions,
                 strict=decision.reason == "safety_refusal",
                 allow_web=decision.reason != "safety_refusal",
+                temperature=temperature,
             )
         finally:
             self.gate.release_ai_slot()
@@ -274,8 +248,10 @@ class MikoOrchestrator:
                 intent=intent,
                 profile=profile,
                 strict=True,
+                user_name=display_name,
+                conversation_key=conversation_key,
+                turn_count=turn,
             )
-
             await self.gate.acquire_ai_slot()
             try:
                 retry, _ = await self._agent_generate(
@@ -285,16 +261,12 @@ class MikoOrchestrator:
                     allow_actions=False,
                     strict=True,
                     allow_web=False,
+                    temperature=0.50,
                 )
             finally:
                 self.gate.release_ai_slot()
 
-            retry_valid, retry_cleaned, retry_reason = self.response.validate(
-                message.author.id,
-                retry,
-                0,
-            )
-
+            retry_valid, retry_cleaned, retry_reason = self.response.validate(message.author.id, retry, 0)
             if retry_valid:
                 cleaned = retry_cleaned
             else:
@@ -310,8 +282,9 @@ class MikoOrchestrator:
             message.author.id,
             "assistant",
             cleaned,
-            getattr(message.guild, "id", None),
-            message.channel.id,
+            guild_id,
+            channel_id,
+            name="Miko",
         )
 
         emotion = self.emotion.analyze(
@@ -320,12 +293,6 @@ class MikoOrchestrator:
             mood=decision.mood,
             intent=intent,
             spice_level=decision.spice_level,
-        )
-        logger.debug(
-            "Miko emotion selected id=%02d name=%s reason=%s",
-            emotion.id,
-            emotion.name,
-            emotion.reason,
         )
 
         return MikoResult(
@@ -356,12 +323,7 @@ class MikoOrchestrator:
     def tool_names(self) -> list[str]:
         return self.tools.names()
 
-    def reset_memory(
-        self,
-        user_id: int,
-        guild_id: int | None,
-        channel_id: int,
-    ) -> None:
+    def reset_memory(self, user_id: int, guild_id: int | None, channel_id: int) -> None:
         self.memory.reset(user_id, guild_id, channel_id)
 
     def forget_user(self, user_id: int) -> None:
