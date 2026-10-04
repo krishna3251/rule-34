@@ -561,6 +561,22 @@ class VerificationCog(commands.Cog):
             logger.error(f"Error in force_verify: {e}")
             await ctx.send("Error force verifying user.")
 
+    @commands.command(name="verification_status", aliases=["verifystatus", "vstatus"])
+    @commands.guild_only()
+    async def verification_status_prefix(self, ctx: commands.Context) -> None:
+        """Check your verification status."""
+        verified = self.db.is_user_verified(ctx.author.id)
+        embed = discord.Embed(
+            title="🔍 Verification Status",
+            description=(
+                "✅ Verified"
+                if verified
+                else "❌ Not verified — use ~verify to start verification.",
+            ),
+            color=discord.Color.green() if verified else discord.Color.red(),
+        )
+        await ctx.send(embed=embed)
+
     # ===== SLASH COMMANDS =====
 
     @app_commands.command(name="verify", description="Verify your age to access this server")
