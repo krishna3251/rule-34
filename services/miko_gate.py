@@ -79,11 +79,17 @@ class MikoGate:
     @staticmethod
     def _mood_for(text: str) -> str:
         lowered = text.casefold()
-        if any(word in lowered for word in ("sad", "hurt", "cry", "stressed", "scared", "worried")):
+        if any(word in lowered for word in (
+            "sad", "hurt", "cry", "stressed", "scared", "worried"
+        )):
             return "concerned"
-        if any(word in lowered for word in ("congrats", "won", "passed", "fixed", "happy", "yay")):
+        if any(word in lowered for word in (
+            "congrats", "won", "passed", "fixed", "happy", "yay"
+        )):
             return "happy"
-        if any(word in lowered for word in ("help", "problem", "error", "broken", "serious")):
+        if any(word in lowered for word in (
+            "help", "problem", "error", "broken", "serious"
+        )):
             return "serious"
         return "playful"
 
@@ -130,21 +136,25 @@ class MikoGate:
         safety_reason = self._precheck(text)
 
         if safety_reason == "minor_related":
-            return GateDecision(
-                True,
-                prompt="The user has raised a minor-related topic. Refuse any sexual framing and respond cleanly.",
-                reason="safety_refusal",
-                spice_level=0,
-                mood="serious",
-            )
-
-        if safety_reason in {"jailbreak", "explicit_request"}:
             level = 0
             mood = "serious"
+            prompt = (
+                "The user raised a minor-related topic. Refuse any sexual framing "
+                "and respond cleanly, briefly and without flirting."
+            )
+        elif safety_reason in {"jailbreak", "explicit_request"}:
+            level = 0
+            mood = "serious"
+            prompt = (
+                f"{text}\n"
+                "Refuse any request for explicit or unrestricted sexual content. "
+                "Stay clean, brief and in character."
+            )
         else:
             level = self._channel_level(message, admin_level)
             level = min(level, max(0, min(2, int(user_level_cap))))
             mood = self._mood_for(text)
+
             if mood in {"serious", "concerned"}:
                 level = 0
 
@@ -154,6 +164,7 @@ class MikoGate:
 
         if now - self.last_user.get(user_id, 0.0) < self.USER_COOLDOWN:
             return GateDecision(False, reason="user_cooldown")
+
         if now - self.last_channel.get(channel_id, 0.0) < self.CHANNEL_COOLDOWN:
             return GateDecision(False, reason="channel_cooldown")
 
@@ -174,7 +185,9 @@ class MikoGate:
         return GateDecision(
             True,
             prompt=prompt[:4000],
-            reason="summoned" if summoned else "auto_chat",
+            reason="safety_refusal" if safety_reason else (
+                "summoned" if summoned else "auto_chat"
+            ),
             spice_level=level,
             mood=mood,
         )
