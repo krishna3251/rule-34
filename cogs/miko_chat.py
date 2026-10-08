@@ -86,7 +86,12 @@ class MikoChat(commands.Cog):
         message: discord.Message,
         text: str,
         emotion_id: int,
+        image_needed: bool = True,
     ) -> None:
+        if not image_needed:
+            await message.reply(text, mention_author=False)
+            return
+
         image_path = self._emotion_file(emotion_id)
         if image_path is None:
             await message.reply(text, mention_author=False)
@@ -126,6 +131,7 @@ class MikoChat(commands.Cog):
                 message,
                 result.text,
                 result.emotion_id,
+                result.image_needed,
             )
 
     @commands.Cog.listener()
