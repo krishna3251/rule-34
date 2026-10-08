@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from services.miko_ai import MikoAI
+from services.miko_image import MikoImageIntentDetector
+from services.miko_image.history import MikoImageHistory
 from services.miko_context import MikoContextBuilder
 from services.miko_decision import MikoDecision, MikoDecisionEngine
 from services.miko_emotion import MikoEmotionEngine
@@ -31,6 +33,9 @@ class MikoResult:
     response_mode: str = "chat"
     priority: str = "normal"
     web_search_used: bool = False
+    image_needed: bool = True
+    image_type: str = "emotion"
+    image_confidence: float = 0.0
 
 
 class MikoChatEngine:
@@ -45,6 +50,8 @@ class MikoChatEngine:
         self.gate = MikoGate()
         self.memory = MikoMemory()
         self.emotion = MikoEmotionEngine()
+        self.image_detector = MikoImageIntentDetector()
+        self.image_history = MikoImageHistory()
         self.profile = MikoProfile()
         self.router = MikoRouter()
         self.decision = MikoDecisionEngine(self.router)
@@ -327,24 +334,57 @@ class MikoChatEngine:
             name="Miko",
         )
 
-        emotion = self.emotion.analyze(
+        previous = self.image_history.last(conversation_key)
+        image_intent = self.image_detector.analyze(
+            decision.prompt,
+            cleaned,
+            history=history,
+            intent=decision.intent,
+            mood=decision.mood,
+            previous_emotion=previous.emotion if previous else None,
+            previous_image_type=previous.image_type if previous else None,
+        )
+
+        # Map the richer detector back onto the existing 24-image catalog.
+        # This keeps deployment safe while the semantic image index is built.
+        emotion_ids = {
+            "neutral": 1, "happy": 3, "laughing": 5, "playful": 6,
+            "confused": 9, "surprised": 10, "shocked": 11, "angry": 12,
+            "embarrassed": 13, "sad": 15, "tired": 16, "nervous": 19,
+            "affectionate": 22, "smug": 23, "sleepy": 24,
+        }
+        emotion_id = emotion_ids.get(image_intent.primary_emotion, 1)
+        legacy_emotion = self.emotion.analyze(
             decision.prompt,
             cleaned,
             mood=decision.mood,
             intent=decision.intent,
             spice_level=decision.spice_level,
         )
+        if image_intent.confidence < 0.60:
+            emotion_id = legacy_emotion.id
+
+        if image_intent.needed:
+            self.image_history.add(
+                conversation_key,
+                f"miko_{emotion_id:02d}",
+                image_intent.image_type,
+                image_intent.primary_emotion,
+            )
 
         return MikoResult(
             replied=True,
             text=cleaned,
             reason=decision.reason,
-            emotion_id=emotion.id,
-            emotion=emotion.name,
+            emotion_id=emotion_id,
+            emotion=image_intent.primary_emotion.title(),
             intent=decision.intent,
             response_mode=decision.response_mode,
             priority=decision.priority,
             web_search_used=used_web,
+            image_needed=image_intent.needed,
+            image_type=image_intent.image_type,
+            image_confidence=image_intent.confidence,
         )
 
     async def _run_gate(
