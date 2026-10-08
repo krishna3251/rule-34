@@ -171,6 +171,7 @@ class MikoChat(commands.Cog):
                 message,
                 result.text,
                 result.emotion_id,
+                result.image_needed,
             )
 
     @commands.command(name="mikosetchat", aliases=["setchat"])
