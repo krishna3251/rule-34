@@ -35,25 +35,27 @@ class VerificationCog(commands.Cog):
         """Generate a unique verification token for enhanced security"""
         return secrets.token_urlsafe(18)
 
-    def is_rate_limited(self, user_id):
+    def is_rate_limited(self, user_id, guild_id=None):
         """Check if user is rate limited"""
+        key = (guild_id, user_id)
         current_time = time.time()
-        if user_id not in self.rate_limits:
-            self.rate_limits[user_id] = []
+        if key not in self.rate_limits:
+            self.rate_limits[key] = []
 
         # Clean old attempts (older than 1 hour)
-        self.rate_limits[user_id] = [
-            attempt_time for attempt_time in self.rate_limits[user_id]
+        self.rate_limits[key] = [
+            attempt_time for attempt_time in self.rate_limits[key]
             if current_time - attempt_time < self.cooldown_period
         ]
 
-        return len(self.rate_limits[user_id]) >= self.max_attempts_per_hour
+        return len(self.rate_limits[key]) >= self.max_attempts_per_hour
 
-    def add_rate_limit_attempt(self, user_id):
+    def add_rate_limit_attempt(self, user_id, guild_id=None):
         """Add a verification attempt to rate limiting"""
-        if user_id not in self.rate_limits:
-            self.rate_limits[user_id] = []
-        self.rate_limits[user_id].append(time.time())
+        key = (guild_id, user_id)
+        if key not in self.rate_limits:
+            self.rate_limits[key] = []
+        self.rate_limits[key].append(time.time())
 
     async def check_account_security(self, user):
         """Enhanced security checks for user account"""
@@ -78,7 +80,7 @@ class VerificationCog(commands.Cog):
 
         return security_issues
 
-    async def log_verification_attempt(self, user, success=False, reason=""):
+    async def log_verification_attempt(self, user, success=False, reason="", guild_id=None):
         """Log verification attempts for audit trail"""
         try:
             self.db.log_verification_attempt(
@@ -87,20 +89,21 @@ class VerificationCog(commands.Cog):
                 success=success,
                 reason=reason,
                 timestamp=datetime.now(timezone.utc).isoformat(),
-                ip_hash=None
+                ip_hash=None,
+                guild_id=guild_id,
             )
         except Exception as e:
             logger.error(f"Failed to log verification attempt: {e}")
 
     @commands.command(name='verify')
     @commands.guild_only()
-    @commands.cooldown(1, 30, commands.BucketType.user)  # 30 second cooldown per user
+    @commands.cooldown(1, 30, commands.BucketType.member)  # 30 second cooldown per guild member
     async def verify_user(self, ctx):
         """Enhanced verification command with security measures"""
         try:
             # Rate limiting check
-            if self.is_rate_limited(ctx.author.id):
-                await self.log_verification_attempt(ctx.author, False, "Rate limited")
+            if self.is_rate_limited(ctx.author.id, ctx.guild.id):
+                await self.log_verification_attempt(ctx.author, False, "Rate limited", ctx.guild.id)
                 embed = discord.Embed(
                     title="🚫 Rate Limited",
                     description="You have exceeded the maximum verification attempts. Please try again later.",
@@ -115,7 +118,8 @@ class VerificationCog(commands.Cog):
                 await self.safe_delete_message(ctx.message, delay=15)
                 return
 
-            existing = self.pending_verifications.get(ctx.author.id)
+            verification_key = (ctx.guild.id, ctx.author.id)
+            existing = self.pending_verifications.get(verification_key)
             if existing and time.time() - existing['timestamp'] <= self.verification_timeout:
                 await ctx.send(
                     "⏳ You already have an active verification session. Please finish it first.",
@@ -124,7 +128,7 @@ class VerificationCog(commands.Cog):
                 return
 
             # Check if already verified
-            if self.db.is_user_verified(ctx.author.id):
+            if self.db.is_user_verified(ctx.author.id, ctx.guild.id):
                 embed = discord.Embed(
                     title="✅ Already Verified",
                     description="You are already verified on this server.",
@@ -137,7 +141,7 @@ class VerificationCog(commands.Cog):
             # Security checks
             security_issues = await self.check_account_security(ctx.author)
             if security_issues:
-                await self.log_verification_attempt(ctx.author, False, f"Security issues: {', '.join(security_issues)}")
+                await self.log_verification_attempt(ctx.author, False, f"Security issues: {', '.join(security_issues)}", ctx.guild.id)
                 embed = discord.Embed(
                     title="🔒 Security Check Failed",
                     description="Your account does not meet the security requirements for verification.",
@@ -182,17 +186,17 @@ class VerificationCog(commands.Cog):
             embed.set_footer(text="React with ✅ to verify or ❌ to cancel")
 
             # Store verification data
-            self.pending_verifications[ctx.author.id] = {
+            self.pending_verifications[verification_key] = {
                 'token': verification_token,
                 'timestamp': time.time(),
                 'guild_id': ctx.guild.id,
-                'attempts': self.verification_attempts.get(ctx.author.id, 0) + 1
+                'attempts': self.verification_attempts.get(verification_key, 0) + 1
             }
 
             try:
                 # Try to send DM first
                 dm_message = await ctx.author.send(embed=embed)
-                self.pending_verifications[ctx.author.id]['message_id'] = dm_message.id
+                self.pending_verifications[verification_key]['message_id'] = dm_message.id
                 await dm_message.add_reaction("✅")
                 await dm_message.add_reaction("❌")
 
@@ -200,7 +204,7 @@ class VerificationCog(commands.Cog):
                 await self.safe_delete_message(ctx.message, delay=10)
 
                 # Set up timeout
-                await self.setup_verification_timeout(ctx.author)
+                await self.setup_verification_timeout(ctx.author, ctx.guild.id)
 
             except discord.Forbidden:
                 # Fallback to channel message if DMs are disabled
@@ -210,29 +214,31 @@ class VerificationCog(commands.Cog):
                     inline=False
                 )
                 message = await ctx.send(embed=embed, delete_after=60)
-                self.pending_verifications[ctx.author.id]['message_id'] = message.id
+                self.pending_verifications[verification_key]['message_id'] = message.id
                 await message.add_reaction("✅")
                 await message.add_reaction("❌")
                 await self.safe_delete_message(ctx.message, delay=60)
 
             # Add to rate limiting
-            self.add_rate_limit_attempt(ctx.author.id)
+            self.add_rate_limit_attempt(ctx.author.id, ctx.guild.id)
 
         except Exception as e:
             logger.error(f"Error in verify_user command: {e}")
             await self.handle_verification_error(ctx, "An unexpected error occurred during verification.")
 
-    async def setup_verification_timeout(self, user):
+    async def setup_verification_timeout(self, user, guild_id=None):
         """Set up automatic timeout for verification"""
+        data = self.pending_verifications.get((guild_id, user.id))
         await asyncio.sleep(self.verification_timeout)
-        if user.id in self.pending_verifications:
-            await self.timeout_verification(user)
+        if data is not None and self.pending_verifications.get((guild_id, user.id)) is data:
+            await self.timeout_verification(user, guild_id)
 
-    async def timeout_verification(self, user):
+    async def timeout_verification(self, user, guild_id=None):
         """Handle verification timeout"""
-        if user.id in self.pending_verifications:
-            del self.pending_verifications[user.id]
-            await self.log_verification_attempt(user, False, "Verification timeout")
+        key = (guild_id, user.id)
+        if key in self.pending_verifications:
+            del self.pending_verifications[key]
+            await self.log_verification_attempt(user, False, "Verification timeout", guild_id)
 
             try:
                 timeout_embed = discord.Embed(
@@ -257,10 +263,11 @@ class VerificationCog(commands.Cog):
 
         try:
             # Check if this is a verification reaction
-            if user.id not in self.pending_verifications:
+            matching = [item for key, item in self.pending_verifications.items()
+                        if key[1] == user.id and item.get('message_id') == reaction.message.id]
+            if not matching:
                 return
-
-            verification_data = self.pending_verifications[user.id]
+            verification_data = matching[0]
 
             # Validate reaction is on correct message
             if not reaction.message.embeds:
@@ -289,12 +296,15 @@ class VerificationCog(commands.Cog):
         try:
             # Validate timing
             if time.time() - verification_data['timestamp'] > self.verification_timeout:
-                await self.timeout_verification(user)
+                await self.timeout_verification(user, verification_data.get('guild_id'))
                 return
 
             # Add to database
-            self.db.verify_user(user.id)
-            await self.log_verification_attempt(user, True, "Successfully verified")
+            guild_id = verification_data.get('guild_id')
+            if not guild_id:
+                return
+            self.db.verify_user(user.id, guild_id)
+            await self.log_verification_attempt(user, True, "Successfully verified", guild_id)
 
             # Add to target server
             await self.add_user_to_target_server(user)
@@ -303,8 +313,7 @@ class VerificationCog(commands.Cog):
             await self.assign_verification_roles(user, verification_data.get('guild_id'))
 
             # Clean up
-            if user.id in self.pending_verifications:
-                del self.pending_verifications[user.id]
+            self.pending_verifications.pop((guild_id, user.id), None)
 
             # Send success message
             success_embed = discord.Embed(
@@ -338,10 +347,11 @@ class VerificationCog(commands.Cog):
     async def cancel_verification(self, user, verification_data):
         """Handle verification cancellation"""
         try:
-            if user.id in self.pending_verifications:
-                del self.pending_verifications[user.id]
+            self.pending_verifications.pop((verification_data.get('guild_id'), user.id), None)
 
-            await self.log_verification_attempt(user, False, "User cancelled verification")
+            await self.log_verification_attempt(
+                user, False, "User cancelled verification", verification_data.get('guild_id')
+            )
 
             cancel_embed = discord.Embed(
                 title="❌ Verification Cancelled",
@@ -507,11 +517,12 @@ class VerificationCog(commands.Cog):
             logger.warning(f"Error deleting message: {e}")
 
     @commands.command(name='verification_stats')
+    @commands.guild_only()
     @commands.has_permissions(administrator=True)
     async def verification_stats(self, ctx):
         """Display verification statistics (Admin only)"""
         try:
-            stats = self.db.get_verification_stats()
+            stats = self.db.get_verification_stats(ctx.guild.id)
 
             embed = discord.Embed(
                 title="📊 Verification Statistics",
@@ -524,7 +535,7 @@ class VerificationCog(commands.Cog):
             )
             embed.add_field(
                 name="🔄 Pending Verifications",
-                value=len(self.pending_verifications),
+                value=sum(key[0] == ctx.guild.id for key in self.pending_verifications),
                 inline=True
             )
             embed.add_field(
@@ -540,11 +551,12 @@ class VerificationCog(commands.Cog):
             await ctx.send("Error retrieving verification statistics.")
 
     @commands.command(name='force_verify')
+    @commands.guild_only()
     @commands.has_permissions(administrator=True)
     async def force_verify(self, ctx, member: discord.Member):
         """Force verify a user (Admin only)"""
         try:
-            self.db.verify_user(member.id)
+            self.db.verify_user(member.id, ctx.guild.id)
             await self.assign_verification_roles(member, ctx.guild.id)
             await self.add_user_to_target_server(member)
 
@@ -555,7 +567,7 @@ class VerificationCog(commands.Cog):
             )
             await ctx.send(embed=embed)
 
-            await self.log_verification_attempt(member, True, f"Force verified by {ctx.author}")
+            await self.log_verification_attempt(member, True, f"Force verified by {ctx.author}", ctx.guild.id)
 
         except Exception as e:
             logger.error(f"Error in force_verify: {e}")
@@ -565,7 +577,7 @@ class VerificationCog(commands.Cog):
     @commands.guild_only()
     async def verification_status_prefix(self, ctx: commands.Context) -> None:
         """Check your verification status."""
-        verified = self.db.is_user_verified(ctx.author.id)
+        verified = self.db.is_user_verified(ctx.author.id, ctx.guild.id)
         embed = discord.Embed(
             title="🔍 Verification Status",
             description=(
@@ -580,13 +592,14 @@ class VerificationCog(commands.Cog):
     # ===== SLASH COMMANDS =====
 
     @app_commands.command(name="verification_stats", description="Show verification statistics")
+    @app_commands.guild_only()
     @app_commands.checks.has_permissions(administrator=True)
     async def verification_stats_slash(self, interaction: discord.Interaction):
         try:
-            stats = self.db.get_verification_stats()
+            stats = self.db.get_verification_stats(interaction.guild_id)
             embed = discord.Embed(title="📊 Verification Statistics", color=discord.Color.blue())
             embed.add_field(name="✅ Total Verified Users", value=str(stats.get("total_verified", 0)), inline=True)
-            embed.add_field(name="🔄 Pending Verifications", value=str(len(self.pending_verifications)), inline=True)
+            embed.add_field(name="🔄 Pending Verifications", value=str(sum(key[0] == interaction.guild_id for key in self.pending_verifications)), inline=True)
             embed.add_field(name="🚫 Failed Attempts (24h)", value=str(stats.get("failed_24h", 0)), inline=True)
             await interaction.response.send_message(embed=embed, ephemeral=True)
         except Exception as exc:
@@ -602,19 +615,23 @@ class VerificationCog(commands.Cog):
                 )
                 return
 
-            if self.is_rate_limited(interaction.user.id):
+            if self.is_rate_limited(interaction.user.id, interaction.guild_id):
+                await self.log_verification_attempt(interaction.user, False, "Rate limited", interaction.guild_id)
                 await interaction.response.send_message(
                     "🚫 You have exceeded the maximum verification attempts. Please wait 1 hour.",
                     ephemeral=True)
                 return
 
-            if self.db.is_user_verified(interaction.user.id):
+            if self.db.is_user_verified(interaction.user.id, interaction.guild_id):
                 await interaction.response.send_message(
                     "✅ You are already verified!", ephemeral=True)
                 return
 
             security_issues = await self.check_account_security(interaction.user)
             if security_issues:
+                await self.log_verification_attempt(
+                    interaction.user, False, f"Security issues: {', '.join(security_issues)}", interaction.guild_id
+                )
                 embed = discord.Embed(
                     title="🔒 Security Check Failed",
                     description="Your account does not meet the security requirements.",
@@ -623,20 +640,28 @@ class VerificationCog(commands.Cog):
                 await interaction.response.send_message(embed=embed, ephemeral=True)
                 return
 
+            verification_key = (interaction.guild_id, interaction.user.id)
+            existing = self.pending_verifications.get(verification_key)
+            if existing and time.time() - existing['timestamp'] <= self.verification_timeout:
+                await interaction.response.send_message(
+                    "⏳ You already have an active verification session. Please finish it first.",
+                    ephemeral=True,
+                )
+                return
             token = self.generate_verification_token(interaction.user.id)
-            self.pending_verifications[interaction.user.id] = {
+            self.pending_verifications[verification_key] = {
                 'token': token,
                 'timestamp': time.time(),
                 'guild_id': interaction.guild_id,
-                'attempts': self.verification_attempts.get(interaction.user.id, 0) + 1
+                'attempts': self.verification_attempts.get(verification_key, 0) + 1
             }
-            self.add_rate_limit_attempt(interaction.user.id)
+            self.add_rate_limit_attempt(interaction.user.id, interaction.guild_id)
 
             embed = discord.Embed(
                 title="🔞 Age Verification",
                 description="Click **Confirm** below to confirm you are 18+ and agree to server rules.",
                 color=discord.Color.orange())
-            view = VerifyView(self, interaction.user)
+            view = VerifyView(self, interaction.user, interaction.guild_id, token)
             await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
         except Exception as e:
@@ -644,8 +669,9 @@ class VerificationCog(commands.Cog):
             await interaction.response.send_message("❌ An error occurred.", ephemeral=True)
 
     @app_commands.command(name="verification_status", description="Check your verification status")
+    @app_commands.guild_only()
     async def verification_status_slash(self, interaction: discord.Interaction):
-        verified = self.db.is_user_verified(interaction.user.id)
+        verified = self.db.is_user_verified(interaction.user.id, interaction.guild_id)
         embed = discord.Embed(
             title="🔍 Verification Status",
             description="✅ Verified" if verified else "❌ Not verified — use `/verify` to get verified.",
@@ -653,15 +679,16 @@ class VerificationCog(commands.Cog):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(name="force_verify", description="Force verify a user (Admin only)")
+    @app_commands.guild_only()
     @app_commands.default_permissions(administrator=True)
     async def force_verify_slash(self, interaction: discord.Interaction, member: discord.Member):
         try:
-            self.db.verify_user(member.id)
+            self.db.verify_user(member.id, interaction.guild_id)
             await self.assign_verification_roles(member, interaction.guild_id)
             await self.add_user_to_target_server(member)
             await interaction.response.send_message(
                 f"✅ {member.mention} has been force-verified.", ephemeral=True)
-            await self.log_verification_attempt(member, True, f"Force verified by {interaction.user}")
+            await self.log_verification_attempt(member, True, f"Force verified by {interaction.user}", interaction.guild_id)
         except Exception as e:
             logger.error(f"Error in force_verify_slash: {e}")
             await interaction.response.send_message("❌ Error force verifying user.", ephemeral=True)
@@ -670,10 +697,12 @@ class VerificationCog(commands.Cog):
 class VerifyView(discord.ui.View):
     """Inline button view for slash-based verification"""
 
-    def __init__(self, cog: VerificationCog, user: discord.User):
+    def __init__(self, cog: VerificationCog, user: discord.User, guild_id: int, token: str):
         super().__init__(timeout=300)
         self.cog = cog
         self.user = user
+        self.guild_id = guild_id
+        self.token = token
 
     @discord.ui.button(label="✅ I am 18+ — Verify Me", style=discord.ButtonStyle.success)
     async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -681,16 +710,19 @@ class VerifyView(discord.ui.View):
             await interaction.response.send_message("❌ This is not your verification.", ephemeral=True)
             return
 
-        data = self.cog.pending_verifications.get(self.user.id)
-        if not data or time.time() - data['timestamp'] > self.cog.verification_timeout:
+        data = self.cog.pending_verifications.get((self.guild_id, self.user.id))
+        if (interaction.guild_id != self.guild_id or not data
+                or data.get('token') != self.token
+                or time.time() - data['timestamp'] > self.cog.verification_timeout):
             await interaction.response.send_message("⏰ Session expired. Please run `/verify` again.", ephemeral=True)
             return
 
-        self.cog.db.verify_user(self.user.id)
-        await self.cog.log_verification_attempt(self.user, True, "Slash verified")
+        guild_id = data.get('guild_id')
+        self.cog.db.verify_user(self.user.id, guild_id)
+        await self.cog.log_verification_attempt(self.user, True, "Slash verified", guild_id)
         await self.cog.assign_verification_roles(self.user, data.get('guild_id'))
         await self.cog.add_user_to_target_server(self.user)
-        self.cog.pending_verifications.pop(self.user.id, None)
+        self.cog.pending_verifications.pop((guild_id, self.user.id), None)
 
         self.stop()
         await interaction.response.edit_message(
@@ -702,7 +734,13 @@ class VerifyView(discord.ui.View):
         if interaction.user.id != self.user.id:
             await interaction.response.send_message("❌", ephemeral=True)
             return
-        self.cog.pending_verifications.pop(self.user.id, None)
+        key = (self.guild_id, self.user.id)
+        data = self.cog.pending_verifications.get(key)
+        if interaction.guild_id != self.guild_id or not data or data.get('token') != self.token:
+            await interaction.response.send_message("⏰ Session expired.", ephemeral=True)
+            return
+        self.cog.pending_verifications.pop(key, None)
+        await self.cog.log_verification_attempt(self.user, False, "User cancelled verification", self.guild_id)
         self.stop()
         await interaction.response.edit_message(
             embed=discord.Embed(title="❌ Cancelled", color=discord.Color.red()), view=None)
