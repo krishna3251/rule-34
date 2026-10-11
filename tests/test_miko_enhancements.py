@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import tempfile
 import unittest
 from pathlib import Path
 
+from services.miko_ai import MikoAI
 from services.miko_decision import MikoDecisionEngine
 from services.miko_games import MikoGameCatalog
 from services.miko_gate import GateDecision
@@ -48,12 +50,62 @@ class MikoEnhancementTests(unittest.TestCase):
             self.assertIn("Alice", names)
             self.assertIn("Bob", names)
 
+    def test_social_temperature_profiles_are_deterministic(self) -> None:
+        engine = MikoSocialEngine()
+        self.assertAlmostEqual(engine.temperature("chat", "playful", 0), 0.88)
+        self.assertAlmostEqual(engine.temperature("gaming", "happy", 0), 0.95)
+        self.assertAlmostEqual(engine.temperature("serious", "serious", 0), 0.45)
+        self.assertGreaterEqual(engine.temperature("serious", "serious", 0), 0.45)
+        self.assertLessEqual(engine.temperature("chat", "happy", 999), 0.98)
+
+    def test_groq_web_search_can_coexist_with_local_tools(self) -> None:
+        class FakeCompletions:
+            captured = None
+
+            def create(self, **kwargs):
+                self.captured = kwargs
+                return {
+                    "choices": [{
+                        "message": {
+                            "content": "searched",
+                            "tool_calls": [],
+                        }
+                    }]
+                }
+
+        class FakeChat:
+            def __init__(self):
+                self.completions = FakeCompletions()
+
+        class FakeClient:
+            def __init__(self):
+                self.chat = FakeChat()
+
+        engine = MikoAI.__new__(MikoAI)
+        engine.groq_client = FakeClient()
+        engine.groq_model = "openai/gpt-oss-20b"
+        engine.web_search_enabled = True
+        result = asyncio.run(engine._groq_generate(
+            [{"role": "user", "content": "latest news"}],
+            tool_schemas=[{
+                "type": "function",
+                "function": {"name": "local_tool", "parameters": {"type": "object"}},
+            }],
+            allow_web=True,
+            strict=False,
+            temperature=0.6,
+        ))
+        self.assertEqual(result.text, "searched")
+        tools = engine.groq_client.chat.completions.captured["tools"]
+        self.assertEqual(tools[0], {"type": "browser_search"})
+        self.assertEqual(tools[1]["function"]["name"], "local_tool")
+
     def test_social_temperature_is_bounded(self) -> None:
         engine = MikoSocialEngine()
         for intent in ("chat", "gaming", "help", "coding", "search", "serious"):
             temp = engine.temperature(intent, "playful", 3)
             self.assertGreaterEqual(temp, 0.45)
-            self.assertLessEqual(temp, 1.05)
+            self.assertLessEqual(temp, 0.98)
 
     def test_rukiya_style_decision_layer(self) -> None:
         engine = MikoDecisionEngine()

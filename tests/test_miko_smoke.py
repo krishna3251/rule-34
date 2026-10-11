@@ -126,7 +126,7 @@ class RepositorySmokeTests(unittest.TestCase):
         chat = (ROOT / "cogs/miko_chat.py").read_text(encoding="utf-8")
         self.assertIn("emotion_id: int = 1", source)
         self.assertIn("emotion_id=emotion.id", source)
-        self.assertIn("miko_{result.emotion_id:02d}", chat)
+        self.assertIn("filename=f\"miko_{emotion_id:02d}{image_path.suffix}\"", chat)
         self.assertIn("discord.File", chat)
 
     def test_miko_command_bridges(self):

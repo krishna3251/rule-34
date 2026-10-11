@@ -309,6 +309,25 @@ The **Decision Engine** is separate from generation. It decides whether the requ
 
 All normal messages, explicit summons, and direct `~askmiko` / `/askmiko` questions now enter the same conversational pipeline. This prevents direct-question commands from bypassing the normal safety, memory, decision, tool and response-validation layers.
 
+### Adaptive conversation temperature
+
+Miko does not use one fixed generation temperature for every request. The social engine adjusts the target by intent and mood so casual conversation stays expressive while coding, search, actions, and serious requests stay more deterministic.
+
+| Intent | Base temperature |
+|---|---:|
+| 💬 Chat | 0.88 |
+| 🎮 Gaming | 0.90 |
+| 🛠️ Help | 0.74 |
+| 💻 Coding | 0.66 |
+| 🔎 Search | 0.60 |
+| ⚙️ Action | 0.58 |
+| 🧠 Serious | 0.50 |
+| 👋 Goodbye | 0.76 |
+
+Mood adjustments are **+0.05 for happy**, **−0.06 for concerned**, and **−0.08 for serious**. A small deterministic turn-based drift adds variety, while the final temperature is clamped to **0.45–0.98**.
+
+The normal validation-retry path uses a conservative **0.50** temperature when a generated response needs regeneration.
+
 The engine is implemented in:
 
 ~~~text
@@ -361,6 +380,12 @@ Miko can also understand natural-language requests and, when explicitly summoned
 
 Groq's GPT-OSS models support built-in browser search, so Miko can use live web information for current news, prices, releases, availability and other time-sensitive questions without a separate search API. The configured default model, <code>openai/gpt-oss-20b</code>, supports this capability.
 
+### Miko Game Catalog
+
+Miko's context builder can use the configured game catalog for gaming conversations. The catalog supports JSON and Excel sources, including the repository/deployment file **Koikatu Based Games List.xlsx**. For Excel input, Miko reads the **Games** sheet and normalizes supported game metadata before adding it to conversational context.
+
+Keep the catalog file present in the deployment when using the Excel source. The code checks the configured **MIKO_GAMES_PATH** first and then supported default catalog locations.
+
 ### Miko Environment
 
 ~~~text
@@ -389,16 +414,19 @@ The Miko services live under:
 
 ~~~text
 services/
-├── miko_orchestrator.py
+├── miko_chat_engine.py
+├── miko_orchestrator.py      # Compatibility wrapper
 ├── miko_gate.py
 ├── miko_memory.py
 ├── miko_context.py
 ├── miko_personality.py
+├── miko_social.py            # Adaptive temperature + social variety
 ├── miko_router.py
 ├── miko_ai.py
 ├── miko_tools.py
 ├── miko_response.py
-└── miko_profile.py
+├── miko_profile.py
+└── miko_emotion.py            # 24-state emotion mapping
 ~~~
 
 ---

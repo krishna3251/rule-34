@@ -220,7 +220,12 @@ class MikoAI:
             request_messages.insert(1, self._strict_message())
 
         tools = list(tool_schemas or [])
-        use_groq_web = bool(allow_web and self.web_search_enabled and not tools)
+        use_groq_web = bool(allow_web and self.web_search_enabled)
+        if use_groq_web:
+            # Groq executes browser_search server-side, so it can coexist with
+            # Miko's local Discord tools. Previously local tools accidentally
+            # disabled web search on the fallback provider.
+            tools.insert(0, {"type": "browser_search"})
 
         kwargs: dict[str, Any] = {
             "model": self.groq_model,
@@ -230,10 +235,9 @@ class MikoAI:
             "reasoning_effort": os.getenv("MIKO_REASONING_EFFORT", "low"),
             "include_reasoning": False,
         }
-        if use_groq_web:
-            kwargs["tools"] = [{"type": "browser_search"}]
+        if tools:
+            kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
-        elif tools:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
 
