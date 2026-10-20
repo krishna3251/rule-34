@@ -32,43 +32,46 @@ class SearchEngine:
         if not query:
             return SearchResponse(query="", results=[], sources=[])
 
-        cache_key = f"search:{query.casefold()}:{limit_per_source}"
-        cached = self.cache.get(cache_key)
+        scope = "all" if media_types is None else ",".join(sorted(t.value for t in media_types))
+        cache_key = f"search:v2:{query.casefold()}:{limit_per_source}:{scope}"
+        cached = await asyncio.to_thread(self.cache.get, cache_key)
         if cached:
             results = [SearchResult(
                 title=x["title"], media_type=MediaType(x["media_type"]), source=x["source"],
                 source_id=x.get("source_id"), url=x.get("url"), description=x.get("description"),
                 tags=x.get("tags", []), adult=x.get("adult", False), image_url=x.get("image_url"),
-                metadata=x.get("metadata", {})) for x in cached]
-            return SearchResponse(query=query, results=results, sources=[x.name for x in self.adapters])
+                metadata=x.get("metadata", {})) for x in cached
+                       if media_types is None or MediaType(x["media_type"]) in media_types]
+            return SearchResponse(query=query, results=results, sources=sorted({x.source for x in results}))
 
         selected = [a for a in self.adapters
                     if (media_types is None or any(t in media_types for t in a.media_types))
-                    and self.manager.should_query(a.name)]
+                    and await asyncio.to_thread(self.manager.should_query, a.name)]
 
         async def run(adapter: SourceAdapter):
             started = time.perf_counter()
             try:
                 items = await adapter.search(query, limit=limit_per_source)
-                self.manager.record_success(adapter.name, started)
+                await asyncio.to_thread(self.manager.record_success, adapter.name, started)
                 return adapter.name, items, None
             except Exception as exc:
-                self.manager.record_failure(adapter.name, exc)
+                await asyncio.to_thread(self.manager.record_failure, adapter.name, exc)
                 logger.exception("Search adapter %s failed", adapter.name)
-                return adapter.name, [], str(exc)
+                return adapter.name, [], "Source temporarily unavailable"
 
         responses = await asyncio.gather(*(run(a) for a in selected))
         results: list[SearchResult] = []
         errors: dict[str, str] = {}
         for source, items, error in responses:
+            items = [item for item in items if media_types is None or item.media_type in media_types]
             results.extend(items)
             if error:
                 errors[source] = error
             for item in items:
-                entity_id = self.manager.index.upsert_entity(
+                entity_id = await asyncio.to_thread(self.manager.index.upsert_entity,
                     item.media_type.value, item.title, item.metadata
                 )
-                self.manager.index.upsert_source_record(
+                await asyncio.to_thread(self.manager.index.upsert_source_record,
                     source=item.source, source_id=item.source_id, media_type=item.media_type.value,
                     title=item.title, url=item.url, entity_id=entity_id, metadata=item.metadata
                 )
@@ -89,7 +92,7 @@ class SearchEngine:
             "tags": x.tags, "adult": x.adult, "image_url": x.image_url, "metadata": x.metadata
         } for x in unique]
         if payload:
-            self.cache.set(cache_key, payload, ttl=300)
+            await asyncio.to_thread(self.cache.set, cache_key, payload, ttl=300)
 
         return SearchResponse(query=query, results=unique,
                               sources=[a.name for a in selected], errors=errors)

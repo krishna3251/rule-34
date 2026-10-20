@@ -16,10 +16,7 @@ if sys.platform == 'win32':
         sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
         sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
-# Add bundled vendor directory so google-generativeai and aiosqlite are always found
-_vendor_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'vendor')
-if _vendor_dir not in sys.path:
-    sys.path.insert(0, _vendor_dir)
+# Use installed requirements. Bundled platform-specific packages must not shadow SDKs.
 
 import discord
 import logging
@@ -33,6 +30,7 @@ from typing import Optional, Dict, Any, List
 from discord.ext import commands, tasks
 from dotenv import load_dotenv
 from database import Database
+from services.access_policy import content_access, prefix_access, restricted, operator_only
 from collections import deque, defaultdict
 import traceback
 
@@ -91,7 +89,7 @@ class Config:
     """Centralized configuration management"""
 
     TOKEN = os.getenv("DISCORD_TOKEN")
-    DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///bot.db")
+    DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///bot_data.db")
     INDEX_DB_PATH = os.getenv("INDEX_DB_PATH", "rule43_index.db")
     REDIS_URL = os.getenv("REDIS_URL")
 
@@ -222,6 +220,13 @@ class Analytics:
         }
 
 
+def backup_sqlite(source_path, destination_path):
+    from contextlib import closing
+    with closing(sqlite3.connect(source_path)) as source:
+        with closing(sqlite3.connect(destination_path)) as target:
+            source.backup(target)
+
+
 # === Enhanced Bot Class ===
 class MikoBot(commands.Bot):
     """Enhanced Discord bot with advanced features"""
@@ -237,16 +242,27 @@ class MikoBot(commands.Bot):
         super().__init__(command_prefix=self._get_prefix,
                          intents=intents,
                          help_command=None,
+                         allowed_mentions=discord.AllowedMentions.none(),
                          owner_ids=set(Config.OWNER_IDS),
                          activity=discord.Activity(
                              type=discord.ActivityType.watching,
                              name="startup..."),
                          status=discord.Status.dnd)
 
+        self.add_check(prefix_access)
+        self.tree.interaction_check = self.slash_access
+        self.tree.on_error = self.on_slash_error
+
         # Initialize managers
         self.start_time = time.time()
         self.processing_commands = set()
-        self.db = Database()
+        if not Config.DATABASE_URL.startswith("sqlite:///"):
+            raise ValueError("DATABASE_URL must be a sqlite:/// URL; other database engines are unsupported")
+        database_path = Config.DATABASE_URL[len("sqlite:///"):]
+        if not database_path:
+            raise ValueError("DATABASE_URL must specify a SQLite file")
+        os.makedirs(os.path.dirname(os.path.abspath(database_path)), exist_ok=True)
+        self.db = Database(database_path)
         self.cache = CacheManager()
         self.analytics = Analytics() if Config.ENABLE_ANALYTICS else None
         self.session: Optional[aiohttp.ClientSession] = None
@@ -256,6 +272,27 @@ class MikoBot(commands.Bot):
         self.command_stats = defaultdict(lambda: {'count': 0, 'total_time': 0})
 
         logger.info("Bot instance initialized")
+
+    async def on_slash_error(self, interaction, error):
+        logger.error("Slash command failed: %s", type(error).__name__, exc_info=error)
+        message = "You cannot use that command here." if isinstance(error, discord.app_commands.CheckFailure) else "Something went wrong. Please try again later."
+        if isinstance(error, discord.app_commands.CommandOnCooldown):
+            message = f"Try again in {error.retry_after:.1f}s."
+        if interaction.response.is_done():
+            await interaction.followup.send(message, ephemeral=True)
+        else:
+            await interaction.response.send_message(message, ephemeral=True)
+
+    async def slash_access(self, interaction):
+        if operator_only(interaction.command) and not await self.is_owner(interaction.user):
+            await interaction.response.send_message("This diagnostic command is owner-only.", ephemeral=True)
+            return False
+        if not restricted(interaction.command):
+            return True
+        if await content_access(self, interaction.guild, interaction.channel, interaction.user):
+            return True
+        await interaction.response.send_message("Use an age-restricted server channel after completing this server's verification.", ephemeral=True)
+        return False
 
     async def _get_prefix(self, bot, message):
         """Dynamic prefix handler with guild-specific prefixes"""
@@ -268,7 +305,7 @@ class MikoBot(commands.Bot):
 
             if custom_prefix:
                 custom_get_prefix = commands.when_mentioned_or(custom_prefix)
-                custom_prefixes = await custom_get_prefix(bot, message)
+                custom_prefixes = custom_get_prefix(bot, message)
                 default_values = (
                     list(default_prefixes)
                     if isinstance(default_prefixes, (list, tuple))
@@ -347,6 +384,7 @@ class MikoBot(commands.Bot):
             f"Extension loading complete: {len(loaded)} loaded, {len(failed)} failed"
         )
 
+        self.failed_extensions = failed
         if failed:
             logger.warning(f"Failed cogs: {', '.join(failed)}")
 
@@ -452,7 +490,7 @@ class MikoBot(commands.Bot):
         """Enhanced error handling"""
 
         # Ignore certain errors
-        ignored = (commands.CommandNotFound, commands.CheckFailure)
+        ignored = (commands.CommandNotFound,)
         if isinstance(error, ignored):
             return
 
@@ -480,6 +518,8 @@ class MikoBot(commands.Bot):
             )] = f"⏱️ Command on cooldown. Try again in {error.retry_after:.1f}s"
         elif isinstance(error, commands.NotOwner):
             error_messages[type(error)] = "🔒 This command is owner-only!"
+        elif isinstance(error, commands.CheckFailure):
+            error_messages[type(error)] = "🔒 You cannot use this command here. Content commands require server verification and an age-restricted channel."
         elif isinstance(error, commands.DisabledCommand):
             error_messages[type(
                 error)] = "🚫 This command is currently disabled"
@@ -495,37 +535,21 @@ class MikoBot(commands.Bot):
             logger.error(f"Command error in {ctx.command}: {error}",
                          exc_info=True)
 
-            if Config.DEBUG_MODE:
-                # Show detailed error in debug mode
-                error_trace = ''.join(
-                    traceback.format_exception(type(error), error,
-                                               error.__traceback__))
-                embed = discord.Embed(
-                    title="🔴 Debug Error",
-                    description=f"```py\n{error_trace[:1900]}```",
-                    color=discord.Color.red())
-                await ctx.send(embed=embed)
-            else:
-                embed = discord.Embed(
-                    description=
-                    "⚠️ An unexpected error occurred. The developers have been notified.",
-                    color=discord.Color.red())
-                await ctx.send(embed=embed, delete_after=10)
-
-                # Send to error webhook if configured
-                if Config.ERROR_WEBHOOK_URL and self.session:
-                    await self._send_error_webhook(ctx, error)
+            await ctx.send("⚠️ An unexpected error occurred. Please try again later.", delete_after=10)
+            if Config.ERROR_WEBHOOK_URL and self.session:
+                await self._send_error_webhook(ctx, error)
 
     async def _send_error_webhook(self, ctx: commands.Context,
                                   error: Exception):
         """Send error details to webhook"""
         try:
             webhook_data = {
+                "allowed_mentions": {"parse": []},
                 "embeds": [{
                     "title":
                     "Bot Error",
                     "description":
-                    f"```{str(error)[:1900]}```",
+                    f"Failure type: {type(error).__name__}. See private process logs for details.",
                     "fields": [
                         {
                             "name": "Command",
@@ -535,13 +559,13 @@ class MikoBot(commands.Bot):
                         },
                         {
                             "name": "User",
-                            "value": f"{ctx.author} ({ctx.author.id})",
+                            "value": str(ctx.author.id),
                             "inline": True
                         },
                         {
                             "name": "Guild",
                             "value":
-                            f"{ctx.guild.name if ctx.guild else 'DM'}",
+                            str(ctx.guild.id) if ctx.guild else "DM",
                             "inline": True
                         },
                     ],
@@ -607,18 +631,14 @@ class MikoBot(commands.Bot):
                 logger.warning("Backup skipped: database file does not exist yet")
                 return
 
-            with sqlite3.connect(source_path) as source:
-                with sqlite3.connect(backup_path) as target:
-                    source.backup(target)
+            await asyncio.to_thread(backup_sqlite, source_path, backup_path)
 
             logger.info(f"✅ Database backup created: {backup_path}")
 
             index_path = Config.INDEX_DB_PATH
             if os.path.exists(index_path):
                 index_backup = os.path.join("backups", f"rule43_index_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db")
-                with sqlite3.connect(index_path) as source:
-                    with sqlite3.connect(index_backup) as target:
-                        source.backup(target)
+                await asyncio.to_thread(backup_sqlite, index_path, index_backup)
                 logger.info(f"✅ Local index backup created: {index_backup}")
         except Exception as e:
             logger.error(f"Backup failed: {e}", exc_info=True)
@@ -742,6 +762,7 @@ async def dev_group(ctx: commands.Context):
 
 
 @dev_group.command(name="reload", aliases=["r"])
+@commands.is_owner()
 async def reload_command(ctx: commands.Context, *extensions: str):
     """Reload bot extensions"""
     if not extensions:
@@ -760,9 +781,9 @@ async def reload_command(ctx: commands.Context, *extensions: str):
                 await bot.load_extension(f"cogs.{ext_name}")
                 results["✅"].append(f"{ext_name} (loaded)")
             except Exception as e:
-                results["❌"].append(f"{ext_name}: {str(e)[:30]}")
+                results["❌"].append(f"{ext_name}: {type(e).__name__}")
         except Exception as e:
-            results["❌"].append(f"{ext_name}: {str(e)[:30]}")
+            results["❌"].append(f"{ext_name}: {type(e).__name__}")
 
     embed = discord.Embed(title="Extension Reload",
                           color=discord.Color.green())
@@ -780,6 +801,7 @@ async def reload_command(ctx: commands.Context, *extensions: str):
 
 
 @dev_group.command(name="sync")
+@commands.is_owner()
 async def sync_command(ctx: commands.Context, scope: str = "global"):
     """Sync slash commands"""
     async with ctx.typing():
@@ -793,39 +815,15 @@ async def sync_command(ctx: commands.Context, scope: str = "global"):
             await ctx.send("⚠️ Invalid scope. Use 'guild' or 'global'")
 
 
-@dev_group.command(name="eval")
+@dev_group.command(name="eval", hidden=True, enabled=False)
+@commands.is_owner()
 async def eval_command(ctx: commands.Context, *, code: str):
-    """Evaluate Python code"""
-    if code.startswith("```") and code.endswith("```"):
-        code = code[3:-3]
-        if code.startswith("py\n"):
-            code = code[3:]
-
-    local_vars = {
-        "bot": bot,
-        "ctx": ctx,
-        "discord": discord,
-        "commands": commands,
-        "asyncio": asyncio,
-    }
-
-    try:
-        result = eval(code, {"__builtins__": __builtins__}, local_vars)
-        if asyncio.iscoroutine(result):
-            result = await result
-
-        embed = discord.Embed(title="✅ Eval Success",
-                              description=f"```py\n{str(result)[:1900]}```",
-                              color=discord.Color.green())
-    except Exception as e:
-        embed = discord.Embed(title="❌ Eval Error",
-                              description=f"```py\n{str(e)[:1900]}```",
-                              color=discord.Color.red())
-
-    await ctx.send(embed=embed)
+    """Remote Python evaluation is disabled; use local operator tooling."""
+    await ctx.send("Remote evaluation is disabled.")
 
 
 @dev_group.command(name="shutdown", aliases=["stop", "exit"])
+@commands.is_owner()
 async def shutdown_command(ctx: commands.Context):
     """Shutdown the bot"""
     embed = discord.Embed(description="🔌 Shutting down...",
@@ -901,6 +899,8 @@ if __name__ == "__main__":
     try:
         logger.info("🚀 Starting Miko...")
         if Config.TOKEN:
+            from keep_alive import keep_alive
+            keep_alive(bot)
             bot.run(Config.TOKEN,
                     log_handler=None)  # We handle logging ourselves
         else:

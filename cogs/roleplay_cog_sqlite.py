@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import sqlite3
+import aiosqlite
 import asyncio
 import os
 from datetime import datetime, timedelta
@@ -11,7 +12,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-DB_PATH = "data/roleplay.db"
+DB_PATH = os.getenv("ROLEPLAY_DB_PATH", "data/roleplay.db")
 
 
 def db_connect():
@@ -29,7 +30,7 @@ def init_db():
     """Initialize database with proper error handling"""
     try:
         # Create data directory if it doesn't exist
-        os.makedirs("data", exist_ok=True)
+        os.makedirs(os.path.dirname(DB_PATH) or ".", exist_ok=True)
 
         conn = db_connect()
         cur = conn.cursor()
@@ -44,18 +45,22 @@ def init_db():
         """)
 
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS sessions (
-                user_id INTEGER PRIMARY KEY,
+            CREATE TABLE IF NOT EXISTS sessions_scoped (
+                user_id INTEGER NOT NULL,
+                guild_id INTEGER NOT NULL,
                 character TEXT NOT NULL,
                 channel_id INTEGER NOT NULL,
                 last_active TIMESTAMP NOT NULL,
+                PRIMARY KEY (guild_id, user_id),
                 FOREIGN KEY (character) REFERENCES characters(name)
             )
         """)
 
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS history (
+            CREATE TABLE IF NOT EXISTS history_scoped (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                guild_id INTEGER NOT NULL,
+                channel_id INTEGER NOT NULL,
                 user_id INTEGER NOT NULL,
                 role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
                 content TEXT NOT NULL,
@@ -64,9 +69,11 @@ def init_db():
         """)
 
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS config (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
+            CREATE TABLE IF NOT EXISTS config_scoped (
+                guild_id INTEGER NOT NULL,
+                key TEXT NOT NULL,
+                value TEXT NOT NULL,
+                PRIMARY KEY (guild_id, key)
             )
         """)
 
@@ -79,11 +86,16 @@ def init_db():
         raise
 
 
+async def async_db_connect():
+    conn = await aiosqlite.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
 class RoleplaySQL(commands.Cog):
 
     def __init__(self, bot):
         self.bot = bot
-        init_db()
         self.idle_timeout = timedelta(minutes=5)
         self.idle_task = None
         self._init_groq()
@@ -104,6 +116,7 @@ class RoleplaySQL(commands.Cog):
 
     async def cog_load(self):
         """Called when the cog is loaded"""
+        await asyncio.to_thread(init_db)
         self.idle_task = self.bot.loop.create_task(self._idle_watcher())
         logger.info("RoleplaySQL cog loaded")
 
@@ -113,297 +126,340 @@ class RoleplaySQL(commands.Cog):
             self.idle_task.cancel()
         logger.info("RoleplaySQL cog unloaded")
 
-    def get_rp_channel_id(self):
-        """Helper method to get RP channel ID from config"""
+    async def get_rp_channel_id(self, guild_id):
+        conn = None
         try:
-            conn = db_connect()
-            cur = conn.cursor()
-            cur.execute("SELECT value FROM config WHERE key='rp_channel_id'")
-            row = cur.fetchone()
-            conn.close()
-            return int(row[0]) if row else None
-        except (sqlite3.Error, ValueError) as e:
-            logger.error(f"Error getting RP channel ID: {e}")
-            return None
+            """Helper method to get RP channel ID from config"""
+            try:
+                conn = await async_db_connect()
+                cur = await conn.cursor()
+                await cur.execute("SELECT value FROM config_scoped WHERE guild_id=? AND key='rp_channel_id'", (guild_id,))
+                row = await cur.fetchone()
+                await conn.close()
+                return int(row[0]) if row else None
+            except (sqlite3.Error, ValueError) as e:
+                logger.error(f"Error getting RP channel ID: {e}")
+                return None
+        finally:
+            if conn is not None:
+                await conn.close()
 
     async def _idle_watcher(self):
-        """Background task to monitor idle sessions"""
-        await self.bot.wait_until_ready()
-        while not self.bot.is_closed():
-            try:
-                conn = db_connect()
-                cur = conn.cursor()
-                cur.execute(
-                    "SELECT user_id, channel_id, last_active FROM sessions")
-                rows = cur.fetchall()
-                now = datetime.utcnow()
+        conn = None
+        try:
+            """Background task to monitor idle sessions"""
+            await self.bot.wait_until_ready()
+            while not self.bot.is_closed():
+                try:
+                    conn = await async_db_connect()
+                    cur = await conn.cursor()
+                    await cur.execute(
+                        "SELECT user_id, guild_id, channel_id, last_active FROM sessions_scoped")
+                    rows = await cur.fetchall()
+                    now = datetime.utcnow()
 
-                for row in rows:
-                    try:
-                        last_active = datetime.fromisoformat(
-                            row["last_active"])
-                        if now - last_active > self.idle_timeout:
-                            channel = self.bot.get_channel(row["channel_id"])
-                            if channel:
-                                await channel.send(
-                                    "⏲️ Session ended due to inactivity.")
-                            cur.execute("DELETE FROM sessions WHERE user_id=?",
-                                        (row["user_id"], ))
-                            logger.info(
-                                f"Ended idle session for user {row['user_id']}"
+                    for row in rows:
+                        try:
+                            last_active = datetime.fromisoformat(
+                                row["last_active"])
+                            if now - last_active > self.idle_timeout:
+                                channel = self.bot.get_channel(row["channel_id"])
+                                if channel:
+                                    await channel.send(
+                                        "⏲️ Session ended due to inactivity.")
+                                await cur.execute("DELETE FROM sessions_scoped WHERE guild_id=? AND user_id=?",
+                                            (row["guild_id"], row["user_id"]))
+                                logger.info(
+                                    f"Ended idle session for user {row['user_id']}"
+                                )
+                        except Exception as e:
+                            logger.error(
+                                f"Error processing idle session for user {row['user_id']}: {e}"
                             )
-                    except Exception as e:
-                        logger.error(
-                            f"Error processing idle session for user {row['user_id']}: {e}"
-                        )
 
-                conn.commit()
-                conn.close()
+                    await conn.commit()
+                    await conn.close()
 
-            except Exception as e:
-                logger.error(f"Error in idle watcher: {e}")
+                except Exception as e:
+                    logger.error(f"Error in idle watcher: {e}")
+                finally:
+                    if conn is not None:
+                        await conn.close()
+                        conn = None
 
-            await asyncio.sleep(30)
+                await asyncio.sleep(30)
+        finally:
+            if conn is not None:
+                await conn.close()
 
     @app_commands.command(name="setrpchannel",
                           description="Set the roleplay channel (Admin only)")
+    @app_commands.guild_only()
     @app_commands.default_permissions(administrator=True)
+    @app_commands.checks.has_permissions(administrator=True)
     async def setrpchannel(self, interaction: discord.Interaction,
                            channel: discord.TextChannel):
+        conn = None
         try:
-            conn = db_connect()
-            cur = conn.cursor()
-            cur.execute(
-                "INSERT OR REPLACE INTO config (key, value) VALUES ('rp_channel_id', ?)",
-                (str(channel.id), ))
-            conn.commit()
-            conn.close()
-            await interaction.response.send_message(
-                f"✅ RP channel set to {channel.mention}", ephemeral=True)
-            logger.info(
-                f"RP channel set to {channel.id} by {interaction.user}")
+            try:
+                conn = await async_db_connect()
+                cur = await conn.cursor()
+                await cur.execute(
+                    "INSERT OR REPLACE INTO config_scoped (guild_id, key, value) VALUES (?, 'rp_channel_id', ?)",
+                    (interaction.guild_id, str(channel.id)))
+                await conn.commit()
+                await conn.close()
+                await interaction.response.send_message(
+                    f"✅ RP channel set to {channel.mention}", ephemeral=True)
+                logger.info(
+                    f"RP channel set to {channel.id} by {interaction.user}")
 
-        except Exception as e:
-            logger.error(f"Error setting RP channel: {e}")
-            await interaction.response.send_message(
-                "❌ An error occurred while setting the RP channel.",
-                ephemeral=True)
+            except Exception as e:
+                logger.error(f"Error setting RP channel: {e}")
+                await interaction.response.send_message(
+                    "❌ An error occurred while setting the RP channel.",
+                    ephemeral=True)
+        finally:
+            if conn is not None:
+                await conn.close()
 
     @app_commands.command(name="addcharacter",
                           description="Add a character to the database")
     async def addcharacter(self, interaction: discord.Interaction, name: str,
                            prompt: str):
         # Validation
-        if len(name) > 50:
-            await interaction.response.send_message(
-                "❌ Character name too long (max 50 characters).",
-                ephemeral=True)
-            return
-
-        if len(prompt) > 2000:
-            await interaction.response.send_message(
-                "❌ Character prompt too long (max 2000 characters).",
-                ephemeral=True)
-            return
-
-        if not name.strip():
-            await interaction.response.send_message(
-                "❌ Character name cannot be empty.", ephemeral=True)
-            return
-
+        conn = None
         try:
-            conn = db_connect()
-            cur = conn.cursor()
-            cur.execute(
-                "INSERT OR REPLACE INTO characters (name, prompt) VALUES (?, ?)",
-                (name.lower().strip(), prompt.strip()))
-            conn.commit()
-            conn.close()
+            if len(name) > 50:
+                await interaction.response.send_message(
+                    "❌ Character name too long (max 50 characters).",
+                    ephemeral=True)
+                return
 
-            await interaction.response.send_message(
-                f"✅ Character `{name}` added successfully.", ephemeral=True)
-            logger.info(f"Character '{name}' added by {interaction.user}")
+            if len(prompt) > 2000:
+                await interaction.response.send_message(
+                    "❌ Character prompt too long (max 2000 characters).",
+                    ephemeral=True)
+                return
 
-        except sqlite3.Error as e:
-            logger.error(f"Database error adding character: {e}")
-            await interaction.response.send_message(
-                "❌ An error occurred while adding the character.",
-                ephemeral=True)
+            if not name.strip():
+                await interaction.response.send_message(
+                    "❌ Character name cannot be empty.", ephemeral=True)
+                return
+
+            try:
+                conn = await async_db_connect()
+                cur = await conn.cursor()
+                await cur.execute(
+                    "INSERT OR REPLACE INTO characters (name, prompt) VALUES (?, ?)",
+                    (name.lower().strip(), prompt.strip()))
+                await conn.commit()
+                await conn.close()
+
+                await interaction.response.send_message(
+                    f"✅ Character `{name}` added successfully.", ephemeral=True)
+                logger.info(f"Character '{name}' added by {interaction.user}")
+
+            except sqlite3.Error as e:
+                logger.error(f"Database error adding character: {e}")
+                await interaction.response.send_message(
+                    "❌ An error occurred while adding the character.",
+                    ephemeral=True)
+        finally:
+            if conn is not None:
+                await conn.close()
 
     @app_commands.command(name="listcharacters",
                           description="List all available characters")
     async def listcharacters(self, interaction: discord.Interaction):
+        conn = None
         try:
-            conn = db_connect()
-            cur = conn.cursor()
-            cur.execute("SELECT name FROM characters ORDER BY name")
-            rows = cur.fetchall()
-            conn.close()
+            try:
+                conn = await async_db_connect()
+                cur = await conn.cursor()
+                await cur.execute("SELECT name FROM characters ORDER BY name")
+                rows = await cur.fetchall()
+                await conn.close()
 
-            if not rows:
+                if not rows:
+                    await interaction.response.send_message(
+                        "❌ No characters found in the database.", ephemeral=True)
+                    return
+
+                character_list = ", ".join([row[0].title() for row in rows])
+                embed = discord.Embed(title="Available Characters",
+                                      description=character_list,
+                                      color=0x00ff00)
+                await interaction.response.send_message(embed=embed,
+                                                        ephemeral=True)
+
+            except sqlite3.Error as e:
+                logger.error(f"Database error listing characters: {e}")
                 await interaction.response.send_message(
-                    "❌ No characters found in the database.", ephemeral=True)
-                return
+                    "❌ An error occurred while fetching characters.",
+                    ephemeral=True)
+        finally:
+            if conn is not None:
+                await conn.close()
 
-            character_list = ", ".join([row[0].title() for row in rows])
-            embed = discord.Embed(title="Available Characters",
-                                  description=character_list,
-                                  color=0x00ff00)
-            await interaction.response.send_message(embed=embed,
-                                                    ephemeral=True)
-
-        except sqlite3.Error as e:
-            logger.error(f"Database error listing characters: {e}")
-            await interaction.response.send_message(
-                "❌ An error occurred while fetching characters.",
-                ephemeral=True)
-
+    @app_commands.guild_only()
     @app_commands.command(name="roleplay",
                           description="Start a roleplay session")
     async def roleplay(self, interaction: discord.Interaction, character: str):
         # Check if RP channel is configured
-        rp_channel_id = self.get_rp_channel_id()
-        if not rp_channel_id:
-            await interaction.response.send_message(
-                "❌ No RP channel configured. Ask an admin to set one.",
-                ephemeral=True)
-            return
-
-        # Check if user is in the correct channel
-        if interaction.channel_id != rp_channel_id:
-            channel = self.bot.get_channel(rp_channel_id)
-            channel_mention = channel.mention if channel else "the configured RP channel"
-            await interaction.response.send_message(
-                f"❌ Use this command in {channel_mention}.", ephemeral=True)
-            return
-
+        conn = None
         try:
-            conn = db_connect()
-            cur = conn.cursor()
-
-            # Check if user already has an active session
-            cur.execute("SELECT * FROM sessions WHERE user_id=?",
-                        (interaction.user.id, ))
-            existing_session = cur.fetchone()
-
-            if existing_session:
-                conn.close()
+            rp_channel_id = await self.get_rp_channel_id(interaction.guild_id)
+            if not rp_channel_id:
                 await interaction.response.send_message(
-                    "❌ You already have an active roleplay session. Use `/endroleplay` first.",
+                    "❌ No RP channel configured. Ask an admin to set one.",
                     ephemeral=True)
                 return
 
-            # Check if character exists
-            cur.execute("SELECT prompt FROM characters WHERE name=?",
-                        (character.lower().strip(), ))
-            row = cur.fetchone()
-            if not row:
-                conn.close()
+            # Check if user is in the correct channel
+            if interaction.channel_id != rp_channel_id:
+                channel = self.bot.get_channel(rp_channel_id)
+                channel_mention = channel.mention if channel else "the configured RP channel"
                 await interaction.response.send_message(
-                    f"❌ Character `{character}` not found. Use `/listcharacters` to see available characters.",
-                    ephemeral=True)
+                    f"❌ Use this command in {channel_mention}.", ephemeral=True)
                 return
 
-            # Create thread
-            channel = interaction.channel
-            thread_name = f"RP: {interaction.user.display_name} as {character.title()}"
-            # Ensure thread name isn't too long
-            if len(thread_name) > 100:
-                thread_name = thread_name[:97] + "..."
+            try:
+                conn = await async_db_connect()
+                cur = await conn.cursor()
 
-            thread = await channel.create_thread(
-                name=thread_name, type=discord.ChannelType.public_thread)
+                # Check if user already has an active session
+                await cur.execute("SELECT * FROM sessions_scoped WHERE guild_id=? AND user_id=?",
+                            (interaction.guild_id, interaction.user.id))
+                existing_session = await cur.fetchone()
 
-            # Store session
-            cur.execute(
-                "INSERT INTO sessions (user_id, character, channel_id, last_active) VALUES (?, ?, ?, ?)",
-                (interaction.user.id, character.lower().strip(), thread.id,
-                 datetime.utcnow().isoformat()))
-            conn.commit()
-            conn.close()
+                if existing_session:
+                    await conn.close()
+                    await interaction.response.send_message(
+                        "❌ You already have an active roleplay session. Use `/endroleplay` first.",
+                        ephemeral=True)
+                    return
 
-            await interaction.response.send_message(
-                f"✅ Roleplay started with **{character.title()}** in {thread.mention}",
-                ephemeral=True)
+                # Check if character exists
+                await cur.execute("SELECT prompt FROM characters WHERE name=?",
+                            (character.lower().strip(), ))
+                row = await cur.fetchone()
+                if not row:
+                    await conn.close()
+                    await interaction.response.send_message(
+                        f"❌ Character `{character}` not found. Use `/listcharacters` to see available characters.",
+                        ephemeral=True)
+                    return
 
-            # Send initial message in thread
-            embed = discord.Embed(
-                title=f"🎭 Roleplay Session: {character.title()}",
-                description=
-                f"**Player:** {interaction.user.mention}\n**Character:** {character.title()}",
-                color=0x9932cc)
+                # Create thread
+                channel = interaction.channel
+                thread_name = f"RP: {interaction.user.display_name} as {character.title()}"
+                # Ensure thread name isn't too long
+                if len(thread_name) > 100:
+                    thread_name = thread_name[:97] + "..."
 
-            # Truncate prompt if too long for embed
-            prompt_display = row['prompt']
-            if len(prompt_display) > 1024:
-                prompt_display = prompt_display[:1021] + "..."
+                thread = await channel.create_thread(
+                    name=thread_name, type=discord.ChannelType.public_thread)
 
-            embed.add_field(name="Character Prompt",
-                            value=prompt_display,
-                            inline=False)
-            embed.set_footer(
-                text=
-                "Type messages to roleplay! Session will end after 5 minutes of inactivity."
-            )
+                # Store session
+                await cur.execute(
+                    "INSERT INTO sessions_scoped (guild_id, user_id, character, channel_id, last_active) VALUES (?, ?, ?, ?, ?)",
+                    (interaction.guild_id, interaction.user.id, character.lower().strip(), thread.id,
+                     datetime.utcnow().isoformat()))
+                await conn.commit()
+                await conn.close()
 
-            await thread.send(embed=embed)
-            logger.info(
-                f"Roleplay session started: {interaction.user} as {character}")
+                await interaction.response.send_message(
+                    f"✅ Roleplay started with **{character.title()}** in {thread.mention}",
+                    ephemeral=True)
 
-        except discord.HTTPException as e:
-            logger.error(f"Discord API error creating roleplay session: {e}")
-            await interaction.response.send_message(
-                "❌ Error creating thread. Please try again.", ephemeral=True)
-        except sqlite3.Error as e:
-            logger.error(f"Database error creating roleplay session: {e}")
-            await interaction.response.send_message(
-                "❌ Database error occurred. Please try again.", ephemeral=True)
-        except Exception as e:
-            logger.error(f"Unexpected error creating roleplay session: {e}")
-            await interaction.response.send_message(
-                f"❌ An unexpected error occurred: {str(e)}", ephemeral=True)
+                # Send initial message in thread
+                embed = discord.Embed(
+                    title=f"🎭 Roleplay Session: {character.title()}",
+                    description=
+                    f"**Player:** {interaction.user.mention}\n**Character:** {character.title()}",
+                    color=0x9932cc)
 
+                # Truncate prompt if too long for embed
+                prompt_display = row['prompt']
+                if len(prompt_display) > 1024:
+                    prompt_display = prompt_display[:1021] + "..."
+
+                embed.add_field(name="Character Prompt",
+                                value=prompt_display,
+                                inline=False)
+                embed.set_footer(
+                    text=
+                    "Type messages to roleplay! Session will end after 5 minutes of inactivity."
+                )
+
+                await thread.send(embed=embed)
+                logger.info(
+                    f"Roleplay session started: {interaction.user} as {character}")
+
+            except discord.HTTPException as e:
+                logger.error(f"Discord API error creating roleplay session: {e}")
+                await interaction.response.send_message(
+                    "❌ Error creating thread. Please try again.", ephemeral=True)
+            except sqlite3.Error as e:
+                logger.error(f"Database error creating roleplay session: {e}")
+                await interaction.response.send_message(
+                    "❌ Database error occurred. Please try again.", ephemeral=True)
+            except Exception as e:
+                logger.error(f"Unexpected error creating roleplay session: {e}")
+                await interaction.response.send_message(
+                    "❌ An unexpected error occurred. Please try again later.", ephemeral=True)
+        finally:
+            if conn is not None:
+                await conn.close()
+
+    @app_commands.guild_only()
     @app_commands.command(name="endroleplay",
                           description="End your current roleplay session")
     async def endroleplay(self, interaction: discord.Interaction):
+        conn = None
         try:
-            conn = db_connect()
-            cur = conn.cursor()
-            cur.execute("SELECT channel_id FROM sessions WHERE user_id=?",
-                        (interaction.user.id, ))
-            session = cur.fetchone()
-
-            if not session:
-                conn.close()
-                await interaction.response.send_message(
-                    "❌ You don't have an active roleplay session.",
-                    ephemeral=True)
-                return
-
-            cur.execute("DELETE FROM sessions WHERE user_id=?",
-                        (interaction.user.id, ))
-            conn.commit()
-            conn.close()
-
-            # Try to send end message to the thread
             try:
-                channel = self.bot.get_channel(session['channel_id'])
-                if channel:
-                    await channel.send("🎭 **Roleplay session ended by user.**")
-            except Exception as e:
-                logger.error(
-                    f"Error sending end message to channel {session['channel_id']}: {e}"
-                )
+                conn = await async_db_connect()
+                cur = await conn.cursor()
+                await cur.execute("SELECT channel_id FROM sessions_scoped WHERE guild_id=? AND user_id=?",
+                            (interaction.guild_id, interaction.user.id))
+                session = await cur.fetchone()
 
-            await interaction.response.send_message(
-                "✅ Roleplay session ended successfully.", ephemeral=True)
-            logger.info(f"Roleplay session ended by {interaction.user}")
+                if not session:
+                    await conn.close()
+                    await interaction.response.send_message(
+                        "❌ You don't have an active roleplay session.",
+                        ephemeral=True)
+                    return
 
-        except sqlite3.Error as e:
-            logger.error(f"Database error ending roleplay session: {e}")
-            await interaction.response.send_message(
-                "❌ An error occurred while ending the session.",
-                ephemeral=True)
+                await cur.execute("DELETE FROM sessions_scoped WHERE guild_id=? AND user_id=?",
+                            (interaction.guild_id, interaction.user.id))
+                await conn.commit()
+                await conn.close()
+
+                # Try to send end message to the thread
+                try:
+                    channel = self.bot.get_channel(session['channel_id'])
+                    if channel:
+                        await channel.send("🎭 **Roleplay session ended by user.**")
+                except Exception as e:
+                    logger.error(
+                        f"Error sending end message to channel {session['channel_id']}: {e}"
+                    )
+
+                await interaction.response.send_message(
+                    "✅ Roleplay session ended successfully.", ephemeral=True)
+                logger.info(f"Roleplay session ended by {interaction.user}")
+
+            except sqlite3.Error as e:
+                logger.error(f"Database error ending roleplay session: {e}")
+                await interaction.response.send_message(
+                    "❌ An error occurred while ending the session.",
+                    ephemeral=True)
+        finally:
+            if conn is not None:
+                await conn.close()
 
     async def generate_character_response(self, character_name, user_message, conversation_history):
         if not getattr(self, 'groq', None):
@@ -457,104 +513,119 @@ class RoleplaySQL(commands.Cog):
     @commands.Cog.listener()
     async def on_message(self, message):
         # Ignore bot messages
-        if message.author.bot:
-            return
-
+        conn = None
         try:
-            # Check if this is a roleplay channel
-            conn = db_connect()
-            cur = conn.cursor()
-            cur.execute("SELECT * FROM sessions WHERE channel_id=?",
-                        (message.channel.id, ))
-            session = cur.fetchone()
+            if message.author.bot or message.guild is None:
+                return
 
-            if session:
-                # Update last activity
-                cur.execute(
-                    "UPDATE sessions SET last_active=? WHERE user_id=?",
-                    (datetime.utcnow().isoformat(), session["user_id"]))
+            from services.access_policy import content_access
+            if not await content_access(self.bot, message.guild, message.channel, message.author):
+                return
+            try:
+                # Check if this is a roleplay channel
+                conn = await async_db_connect()
+                cur = await conn.cursor()
+                await cur.execute("SELECT * FROM sessions_scoped WHERE guild_id=? AND channel_id=?",
+                            (message.guild.id, message.channel.id))
+                session = await cur.fetchone()
 
-                # Save user message to history
-                cur.execute(
-                    "INSERT INTO history (user_id, role, content) VALUES (?, ?, ?)",
-                    (message.author.id, "user", message.content))
-                conn.commit()
+                if session and session["user_id"] == message.author.id:
+                    # Update last activity
+                    await cur.execute(
+                        "UPDATE sessions_scoped SET last_active=? WHERE guild_id=? AND user_id=?",
+                        (datetime.utcnow().isoformat(), message.guild.id, session["user_id"]))
 
-                # Get conversation history for context
-                cur.execute(
-                    "SELECT role, content FROM history WHERE user_id=? ORDER BY ts DESC LIMIT 10",
-                    (session["user_id"], ))
-                history_rows = cur.fetchall()
-                conversation_history = [{
-                    "role": row[0],
-                    "content": row[1]
-                } for row in reversed(history_rows)]
+                    # Save user message to history
+                    await cur.execute(
+                        "INSERT INTO history_scoped (guild_id, channel_id, user_id, role, content) VALUES (?, ?, ?, ?, ?)",
+                        (message.guild.id, message.channel.id, message.author.id, "user", message.content))
+                    await conn.commit()
 
-                conn.close()
+                    # Get conversation history for context
+                    await cur.execute(
+                        "SELECT role, content FROM history_scoped WHERE guild_id=? AND channel_id=? ORDER BY id DESC LIMIT 10",
+                        (message.guild.id, message.channel.id))
+                    history_rows = await cur.fetchall()
+                    conversation_history = [{
+                        "role": row[0],
+                        "content": row[1]
+                    } for row in reversed(history_rows)]
 
-                # Generate character response
-                if getattr(self, 'groq', None):
-                    async with message.channel.typing():
-                        character_response = await self.generate_character_response(
-                            session["character"], message.content,
-                            conversation_history)
+                    await conn.close()
 
-                    if character_response:
-                        # Send character response
-                        bot_message = await message.channel.send(
-                            character_response)
+                    # Generate character response
+                    if getattr(self, 'groq', None):
+                        async with message.channel.typing():
+                            character_response = await self.generate_character_response(
+                                session["character"], message.content,
+                                conversation_history)
 
-                        # Save bot response to history
-                        conn = db_connect()
-                        cur = conn.cursor()
-                        cur.execute(
-                            "INSERT INTO history (user_id, role, content) VALUES (?, ?, ?)",
-                            (session["user_id"], "assistant",
-                             character_response))
-                        conn.commit()
-                        conn.close()
+                        if character_response:
+                            # Send character response
+                            bot_message = await message.channel.send(
+                                character_response)
+
+                            # Save bot response to history
+                            conn = await async_db_connect()
+                            cur = await conn.cursor()
+                            await cur.execute(
+                                "INSERT INTO history_scoped (guild_id, channel_id, user_id, role, content) VALUES (?, ?, ?, ?, ?)",
+                                (message.guild.id, message.channel.id, session["user_id"], "assistant",
+                                 character_response))
+                            await conn.commit()
+                            await conn.close()
+                    else:
+                        # Model not available, send a fallback message
+                        await message.channel.send(
+                            "🤖 *The character seems to be away right now. AI is not configured.*"
+                        )
                 else:
-                    # Model not available, send a fallback message
-                    await message.channel.send(
-                        "🤖 *The character seems to be away right now. AI is not configured.*"
-                    )
-            else:
-                conn.close()
+                    await conn.close()
 
-        except Exception as e:
-            logger.error(f"Error handling message: {e}")
+            except Exception as e:
+                logger.error(f"Error handling message: {e}")
+        finally:
+            if conn is not None:
+                await conn.close()
 
     @app_commands.command(name="clearhistory",
                           description="Clear roleplay history (Admin only)")
+    @app_commands.guild_only()
     @app_commands.default_permissions(administrator=True)
+    @app_commands.checks.has_permissions(administrator=True)
     async def clearhistory(self,
                            interaction: discord.Interaction,
                            user: discord.Member = None):
+        conn = None
         try:
-            conn = db_connect()
-            cur = conn.cursor()
+            try:
+                conn = await async_db_connect()
+                cur = await conn.cursor()
 
-            if user:
-                cur.execute("DELETE FROM history WHERE user_id=?", (user.id, ))
+                if user:
+                    await cur.execute("DELETE FROM history_scoped WHERE guild_id=? AND user_id=?", (interaction.guild_id, user.id))
+                    await interaction.response.send_message(
+                        f"✅ Cleared roleplay history for {user.mention}",
+                        ephemeral=True)
+                    logger.info(
+                        f"Cleared history for user {user.id} by {interaction.user}"
+                    )
+                else:
+                    await cur.execute("DELETE FROM history_scoped WHERE guild_id=?", (interaction.guild_id,))
+                    await interaction.response.send_message(
+                        "✅ Cleared all roleplay history", ephemeral=True)
+                    logger.info(f"Cleared all history by {interaction.user}")
+
+                await conn.commit()
+                await conn.close()
+
+            except sqlite3.Error as e:
+                logger.error(f"Database error clearing history_scoped: {e}")
                 await interaction.response.send_message(
-                    f"✅ Cleared roleplay history for {user.mention}",
-                    ephemeral=True)
-                logger.info(
-                    f"Cleared history for user {user.id} by {interaction.user}"
-                )
-            else:
-                cur.execute("DELETE FROM history")
-                await interaction.response.send_message(
-                    "✅ Cleared all roleplay history", ephemeral=True)
-                logger.info(f"Cleared all history by {interaction.user}")
-
-            conn.commit()
-            conn.close()
-
-        except sqlite3.Error as e:
-            logger.error(f"Database error clearing history: {e}")
-            await interaction.response.send_message(
-                "❌ An error occurred while clearing history.", ephemeral=True)
+                    "❌ An error occurred while clearing history_scoped.", ephemeral=True)
+        finally:
+            if conn is not None:
+                await conn.close()
 
 
 # Setup function for loading the cog

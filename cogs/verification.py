@@ -83,7 +83,7 @@ class VerificationCog(commands.Cog):
     async def log_verification_attempt(self, user, success=False, reason="", guild_id=None):
         """Log verification attempts for audit trail"""
         try:
-            self.db.log_verification_attempt(
+            await asyncio.to_thread(self.db.log_verification_attempt,
                 user_id=user.id,
                 username=str(user),
                 success=success,
@@ -128,7 +128,7 @@ class VerificationCog(commands.Cog):
                 return
 
             # Check if already verified
-            if self.db.is_user_verified(ctx.author.id, ctx.guild.id):
+            if await asyncio.to_thread(self.db.is_user_verified, ctx.author.id, ctx.guild.id):
                 embed = discord.Embed(
                     title="✅ Already Verified",
                     description="You are already verified on this server.",
@@ -303,7 +303,7 @@ class VerificationCog(commands.Cog):
             guild_id = verification_data.get('guild_id')
             if not guild_id:
                 return
-            self.db.verify_user(user.id, guild_id)
+            await asyncio.to_thread(self.db.verify_user, user.id, guild_id)
             await self.log_verification_attempt(user, True, "Successfully verified", guild_id)
 
             # Add to target server
@@ -450,7 +450,7 @@ class VerificationCog(commands.Cog):
                 return
 
             try:
-                settings = self.db.get_server_settings(guild.id) or {}
+                settings = await asyncio.to_thread(self.db.get_server_settings, guild.id) or {}
                 verification_role_id = settings.get('verification_role_id')
 
                 if verification_role_id:
@@ -522,7 +522,7 @@ class VerificationCog(commands.Cog):
     async def verification_stats(self, ctx):
         """Display verification statistics (Admin only)"""
         try:
-            stats = self.db.get_verification_stats(ctx.guild.id)
+            stats = await asyncio.to_thread(self.db.get_verification_stats, ctx.guild.id)
 
             embed = discord.Embed(
                 title="📊 Verification Statistics",
@@ -556,7 +556,7 @@ class VerificationCog(commands.Cog):
     async def force_verify(self, ctx, member: discord.Member):
         """Force verify a user (Admin only)"""
         try:
-            self.db.verify_user(member.id, ctx.guild.id)
+            await asyncio.to_thread(self.db.verify_user, member.id, ctx.guild.id)
             await self.assign_verification_roles(member, ctx.guild.id)
             await self.add_user_to_target_server(member)
 
@@ -577,7 +577,7 @@ class VerificationCog(commands.Cog):
     @commands.guild_only()
     async def verification_status_prefix(self, ctx: commands.Context) -> None:
         """Check your verification status."""
-        verified = self.db.is_user_verified(ctx.author.id, ctx.guild.id)
+        verified = await asyncio.to_thread(self.db.is_user_verified, ctx.author.id, ctx.guild.id)
         embed = discord.Embed(
             title="🔍 Verification Status",
             description=(
@@ -596,7 +596,7 @@ class VerificationCog(commands.Cog):
     @app_commands.checks.has_permissions(administrator=True)
     async def verification_stats_slash(self, interaction: discord.Interaction):
         try:
-            stats = self.db.get_verification_stats(interaction.guild_id)
+            stats = await asyncio.to_thread(self.db.get_verification_stats, interaction.guild_id)
             embed = discord.Embed(title="📊 Verification Statistics", color=discord.Color.blue())
             embed.add_field(name="✅ Total Verified Users", value=str(stats.get("total_verified", 0)), inline=True)
             embed.add_field(name="🔄 Pending Verifications", value=str(sum(key[0] == interaction.guild_id for key in self.pending_verifications)), inline=True)
@@ -622,7 +622,7 @@ class VerificationCog(commands.Cog):
                     ephemeral=True)
                 return
 
-            if self.db.is_user_verified(interaction.user.id, interaction.guild_id):
+            if await asyncio.to_thread(self.db.is_user_verified, interaction.user.id, interaction.guild_id):
                 await interaction.response.send_message(
                     "✅ You are already verified!", ephemeral=True)
                 return
@@ -671,7 +671,7 @@ class VerificationCog(commands.Cog):
     @app_commands.command(name="verification_status", description="Check your verification status")
     @app_commands.guild_only()
     async def verification_status_slash(self, interaction: discord.Interaction):
-        verified = self.db.is_user_verified(interaction.user.id, interaction.guild_id)
+        verified = await asyncio.to_thread(self.db.is_user_verified, interaction.user.id, interaction.guild_id)
         embed = discord.Embed(
             title="🔍 Verification Status",
             description="✅ Verified" if verified else "❌ Not verified — use `/verify` to get verified.",
@@ -681,9 +681,10 @@ class VerificationCog(commands.Cog):
     @app_commands.command(name="force_verify", description="Force verify a user (Admin only)")
     @app_commands.guild_only()
     @app_commands.default_permissions(administrator=True)
+    @app_commands.checks.has_permissions(administrator=True)
     async def force_verify_slash(self, interaction: discord.Interaction, member: discord.Member):
         try:
-            self.db.verify_user(member.id, interaction.guild_id)
+            await asyncio.to_thread(self.db.verify_user, member.id, interaction.guild_id)
             await self.assign_verification_roles(member, interaction.guild_id)
             await self.add_user_to_target_server(member)
             await interaction.response.send_message(

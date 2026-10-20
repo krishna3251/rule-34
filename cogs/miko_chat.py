@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 import json
 import logging
 from pathlib import Path
@@ -262,7 +264,7 @@ class MikoChat(commands.Cog):
             f"Primary: {self.chat_engine.provider} / {self.chat_engine.model}\n"
             f"Live web: {'enabled' if self.chat_engine.web_search_ready else 'unavailable'}\n"
             f"Agent tools: {len(self.chat_engine.tool_names)}\n"
-            "Memory: scoped user + channel context / 45 min expiry\n"
+            "Memory: current channel context / 45 min expiry\n"
             f"Channel level: {level}\n"
             f"Disabled: {disabled}\n"
             f"Quiet mode: {quiet}"
@@ -270,7 +272,7 @@ class MikoChat(commands.Cog):
 
     @commands.command(name="resetmiko", aliases=["resetmemory", "resetconvo"])
     async def reset_miko(self, ctx: commands.Context) -> None:
-        self.chat_engine.reset_memory(
+        await asyncio.to_thread(self.chat_engine.reset_memory,
             ctx.author.id,
             getattr(ctx.guild, "id", None),
             ctx.channel.id,
@@ -279,19 +281,19 @@ class MikoChat(commands.Cog):
 
     @commands.command(name="forgetmiko", aliases=["forgetme"])
     async def forget_miko(self, ctx: commands.Context) -> None:
-        self.chat_engine.forget_user(ctx.author.id)
+        await asyncio.to_thread(self.chat_engine.forget_user, ctx.author.id)
         await ctx.send(
             "Your stored Miko memory and profile have been deleted."
         )
 
     @commands.command(name="stopflirting")
     async def stop_flirting(self, ctx: commands.Context) -> None:
-        self.chat_engine.profile.set(ctx.author.id, "level_cap", 0)
+        await asyncio.to_thread(self.chat_engine.profile.set, ctx.author.id, "level_cap", 0)
         await ctx.send("Understood. Miko will keep things clean for you.")
 
     @commands.command(name="allowflirting")
     async def allow_flirting(self, ctx: commands.Context) -> None:
-        self.chat_engine.profile.set(ctx.author.id, "level_cap", 2)
+        await asyncio.to_thread(self.chat_engine.profile.set, ctx.author.id, "level_cap", 2)
         await ctx.send("Your personal Miko level cap has been restored.")
 
     @commands.command(name="askmiko", aliases=["mikoask"])
@@ -432,7 +434,7 @@ class MikoChat(commands.Cog):
             f"Primary: {self.chat_engine.provider} / {self.chat_engine.model}\n"
             f"Live web: {'enabled' if self.chat_engine.web_search_ready else 'unavailable'}\n"
             f"Agent tools: {len(self.chat_engine.tool_names)}\n"
-            "Memory: scoped user + channel context / 45 min expiry\n"
+            "Memory: current channel context / 45 min expiry\n"
             f"Channel level: {level}\n"
             f"Disabled: {disabled}\n"
             f"Quiet mode: {quiet}"
@@ -440,7 +442,7 @@ class MikoChat(commands.Cog):
 
     @app_commands.command(name="resetmiko", description="Clear your Miko conversation memory")
     async def reset_miko_slash(self, interaction: discord.Interaction) -> None:
-        self.chat_engine.reset_memory(
+        await asyncio.to_thread(self.chat_engine.reset_memory,
             interaction.user.id,
             interaction.guild_id,
             interaction.channel_id,
@@ -449,7 +451,7 @@ class MikoChat(commands.Cog):
 
     @app_commands.command(name="forgetmiko", description="Delete your stored Miko memory and profile")
     async def forget_miko_slash(self, interaction: discord.Interaction) -> None:
-        self.chat_engine.forget_user(interaction.user.id)
+        await asyncio.to_thread(self.chat_engine.forget_user, interaction.user.id)
         await interaction.response.send_message(
             "Your stored Miko memory and profile have been deleted.",
             ephemeral=True,
@@ -457,12 +459,12 @@ class MikoChat(commands.Cog):
 
     @app_commands.command(name="stopflirting", description="Keep Miko clean for your conversations")
     async def stop_flirting_slash(self, interaction: discord.Interaction) -> None:
-        self.chat_engine.profile.set(interaction.user.id, "level_cap", 0)
+        await asyncio.to_thread(self.chat_engine.profile.set, interaction.user.id, "level_cap", 0)
         await interaction.response.send_message("Understood. Miko will keep things clean for you.")
 
     @app_commands.command(name="allowflirting", description="Restore your personal Miko level cap")
     async def allow_flirting_slash(self, interaction: discord.Interaction) -> None:
-        self.chat_engine.profile.set(interaction.user.id, "level_cap", 2)
+        await asyncio.to_thread(self.chat_engine.profile.set, interaction.user.id, "level_cap", 2)
         await interaction.response.send_message("Your personal Miko level cap has been restored.")
 
     @app_commands.command(name="askmiko", description="Ask Miko a direct question")

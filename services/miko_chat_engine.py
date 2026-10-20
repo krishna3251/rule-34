@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -216,7 +217,7 @@ class MikoChatEngine:
         conversation_key: str,
         turn: int,
     ) -> MikoResult:
-        self.memory.add(
+        await asyncio.to_thread(self.memory.add,
             message.author.id,
             "user",
             decision.prompt,
@@ -318,7 +319,7 @@ class MikoChatEngine:
                 )
                 cleaned = self.response.fallback(retry_reason)
 
-        self.memory.add(
+        await asyncio.to_thread(self.memory.add,
             message.author.id,
             "assistant",
             cleaned,
@@ -355,7 +356,7 @@ class MikoChatEngine:
         auto_chat: bool,
         admin_level: int,
     ) -> tuple[GateDecision, dict[str, Any]]:
-        profile = self.profile.get(message.author.id)
+        profile = self.profile.get(message.author.id, getattr(message.guild, "id", None), message.channel.id)
         user_level_cap = self._profile_level(profile)
         gate = await self.gate.check(
             message,
@@ -408,7 +409,7 @@ class MikoChatEngine:
             auto_chat=auto_chat,
             profile=profile,
         )
-        decision = self._apply_local_request(message, decision)
+        decision = await asyncio.to_thread(self._apply_local_request, message, decision)
 
         guild_id = getattr(message.guild, "id", None)
         conversation_key = self._conversation_key(message)
@@ -419,7 +420,7 @@ class MikoChatEngine:
             or "User"
         )
 
-        history = self.memory.history(
+        history = await asyncio.to_thread(self.memory.history,
             message.author.id,
             guild_id,
             message.channel.id,
@@ -429,7 +430,7 @@ class MikoChatEngine:
             bot=bot,
             decision=decision,
             history=history,
-            profile=self.profile.get(message.author.id),
+            profile=self.profile.get(message.author.id, getattr(message.guild, "id", None), message.channel.id),
             display_name=display_name,
             conversation_key=conversation_key,
             turn=turn,
@@ -449,7 +450,7 @@ class MikoChatEngine:
         bypass the normal safety, memory, decision, tool and validation layers.
         """
 
-        profile = self.profile.get(message.author.id)
+        profile = self.profile.get(message.author.id, getattr(message.guild, "id", None), message.channel.id)
         gate = await self.gate.check_direct(
             message,
             prompt,
@@ -472,7 +473,7 @@ class MikoChatEngine:
             auto_chat=False,
             profile=profile,
         )
-        decision = self._apply_local_request(message, decision)
+        decision = await asyncio.to_thread(self._apply_local_request, message, decision)
 
         guild_id = getattr(message.guild, "id", None)
         conversation_key = self._conversation_key(message)
@@ -482,7 +483,7 @@ class MikoChatEngine:
             or getattr(message.author, "name", None)
             or "User"
         )
-        history = self.memory.history(
+        history = await asyncio.to_thread(self.memory.history,
             message.author.id,
             guild_id,
             message.channel.id,
@@ -493,7 +494,7 @@ class MikoChatEngine:
             bot=bot,
             decision=decision,
             history=history,
-            profile=self.profile.get(message.author.id),
+            profile=self.profile.get(message.author.id, getattr(message.guild, "id", None), message.channel.id),
             display_name=display_name,
             conversation_key=conversation_key,
             turn=turn,

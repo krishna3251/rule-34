@@ -19,10 +19,5 @@ class ItchAdapter(SourceAdapter):
         return []
 
     async def health(self) -> bool:
-        try:
-            timeout = aiohttp.ClientTimeout(total=5)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get("https://itch.io", allow_redirects=True) as response:
-                    return response.status < 500
-        except (aiohttp.ClientError, asyncio.TimeoutError):
-            return False
+        # Search is deliberately unavailable until a supported endpoint is configured.
+        return False
