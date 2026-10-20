@@ -5,12 +5,16 @@ RESTRICTED_COGS = frozenset({"SearchCog", "SimilarCog", "NSFWContent", "NutakuCo
 EXEMPT_COMMANDS = frozenset({"setrpchannel", "clearhistory", "endroleplay"})
 
 
+def is_age_restricted(channel) -> bool:
+    parent = getattr(channel, 'parent', None)
+    target = parent if parent is not None else channel
+    return bool(getattr(target, 'is_nsfw', lambda: False)())
+
+
 async def content_access(bot, guild, channel, user) -> bool:
     if guild is None or channel is None:
         return False
-    parent = getattr(channel, 'parent', None)
-    target = parent if parent is not None else channel
-    if not getattr(target, 'is_nsfw', lambda: False)():
+    if not is_age_restricted(channel):
         return False
     db = getattr(bot, 'db', None)
     if db is None:

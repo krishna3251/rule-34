@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import os
@@ -43,6 +44,7 @@ class MikoProfile:
             os.replace(temp_path, self.path)
         except OSError:
             logging.getLogger("discord_bot").exception("Could not save Miko profile")
+            raise
         finally:
             if temp_path and os.path.exists(temp_path):
                 os.unlink(temp_path)
@@ -62,6 +64,29 @@ class MikoProfile:
     @synchronized
     def set(self, user_id: int, key: str, value: Any) -> None:
         self.data.setdefault(str(user_id), {})[key] = value
+        self.save()
+
+    @synchronized
+    def enable_flirting(self, user_id: int, guild_id: int, channel_id: int) -> None:
+        """Consent applies only to this user's current server/channel."""
+        before = copy.deepcopy(self.data)
+        try:
+            self.data.setdefault(str(user_id), {})["level_cap"] = 2
+            self.data.setdefault(f"{guild_id}:{channel_id}:{user_id}", {})["flirt_opt_in"] = True
+            self.save()
+        except OSError:
+            self.data = before
+            raise
+
+    @synchronized
+    def disable_flirting(self, user_id: int) -> None:
+        """An opt-out clears every channel's opt-in, so it cannot revive later."""
+        # Keep the in-memory opt-out even if disk persistence fails. A command
+        # error tells the user it was not saved; never restore unwanted flirting.
+        self.data.setdefault(str(user_id), {})["level_cap"] = 0
+        for key, value in self.data.items():
+            if key.endswith(f":{user_id}") and isinstance(value, dict):
+                value.pop("flirt_opt_in", None)
         self.save()
 
     @synchronized

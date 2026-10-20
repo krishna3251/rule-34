@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from services.miko_ai import MikoAI
+from services.access_policy import content_access
 from services.miko_context import MikoContextBuilder
 from services.miko_decision import MikoDecision, MikoDecisionEngine
 from services.miko_emotion import MikoEmotionEngine
@@ -195,7 +196,7 @@ class MikoChatEngine:
 
     def _apply_local_request(self, message: Any, decision: MikoDecision) -> MikoDecision:
         if self._is_stop_flirting_request(decision.prompt):
-            self.profile.set(message.author.id, "level_cap", 0)
+            self.profile.disable_flirting(message.author.id)
             decision.spice_level = 0
             decision.mood = "serious"
             decision.response_mode = "support"
@@ -262,11 +263,19 @@ class MikoChatEngine:
         if not reply:
             reply = "I lost my train of thought. Try that again?"
 
-        valid, cleaned, validation_reason = self.response.validate(
-            message.author.id,
-            reply,
-            decision.spice_level,
-        )
+        current_profile = await self.conversation_profile(message, bot)
+        if decision.spice_level > 0 and self._profile_level(current_profile) == 0:
+            # An opt-out or access revocation during generation wins over that
+            # in-flight turn. Regenerate with the existing clean retry path.
+            decision.spice_level = 0
+            decision.mood = "neutral"
+            valid, cleaned, validation_reason = False, "", "tone_changed"
+        else:
+            valid, cleaned, validation_reason = self.response.validate(
+                message.author.id,
+                reply,
+                decision.spice_level,
+            )
 
         if not valid:
             retry_messages = self.context.build(
@@ -344,6 +353,15 @@ class MikoChatEngine:
             web_search_used=used_web,
         )
 
+    async def conversation_profile(self, message: Any, bot: Any) -> dict[str, Any]:
+        guild = getattr(message, "guild", None)
+        profile = self.profile.get(message.author.id, getattr(guild, "id", None), message.channel.id)
+        # Consent and current access are checked on every turn, including /askmiko.
+        if (profile.get("flirt_opt_in") is not True or self._profile_level(profile) == 0
+                or not await content_access(bot, guild, message.channel, message.author)):
+            profile["level_cap"] = 0
+        return profile
+
     async def _run_gate(
         self,
         message: Any,
@@ -352,7 +370,7 @@ class MikoChatEngine:
         auto_chat: bool,
         admin_level: int,
     ) -> tuple[GateDecision, dict[str, Any]]:
-        profile = self.profile.get(message.author.id, getattr(message.guild, "id", None), message.channel.id)
+        profile = await self.conversation_profile(message, bot)
         user_level_cap = self._profile_level(profile)
         gate = await self.gate.check(
             message,
@@ -446,7 +464,7 @@ class MikoChatEngine:
         bypass the normal safety, memory, decision, tool and validation layers.
         """
 
-        profile = self.profile.get(message.author.id, getattr(message.guild, "id", None), message.channel.id)
+        profile = await self.conversation_profile(message, bot)
         gate = await self.gate.check_direct(
             message,
             prompt,
