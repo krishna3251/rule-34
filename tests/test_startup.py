@@ -34,6 +34,9 @@ async def check():
             assert len(main.bot.extensions) >= 10
             assert main.bot.get_command('dev eval').enabled is False
             assert main.bot.get_command('search') is not None
+            assert main.bot.get_command('flirt') is not None
+            for name in ('on', 'off', 'status'):
+                assert main.bot.tree.get_command('flirt').get_command(name) is not None
             assert main.bot.tree.get_command('search') is not None
             from services.access_policy import restricted
             assert restricted(main.bot.tree.get_command('game').get_command('search'))

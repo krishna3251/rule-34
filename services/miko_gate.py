@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from services.access_policy import is_age_restricted
+
 import asyncio
 import logging
 import os
@@ -197,7 +199,7 @@ class MikoGate:
         else:
             level = max(0, min(2, int(admin_level)))
             channel = getattr(message, "channel", None)
-            if level >= 2 and not bool(getattr(channel, "is_nsfw", lambda: False)()):
+            if level >= 2 and not is_age_restricted(channel):
                 level = 1
             level = min(level, max(0, min(2, int(user_level_cap))))
             mood = self._mood_for(text)
@@ -276,7 +278,7 @@ class MikoGate:
         else:
             level = max(0, min(2, int(admin_level)))
             channel = getattr(message, "channel", None)
-            if level >= 2 and not bool(getattr(channel, "is_nsfw", lambda: False)()):
+            if level >= 2 and not is_age_restricted(channel):
                 level = 1
             level = min(level, max(0, min(2, int(user_level_cap))))
             mood = self._mood_for(text)

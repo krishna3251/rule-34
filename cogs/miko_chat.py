@@ -11,6 +11,7 @@ from discord.ext import commands
 from discord import app_commands
 
 from services.miko_chat_engine import MikoChatEngine
+from services.access_policy import content_access, is_age_restricted
 
 logger = logging.getLogger("discord_bot")
 
@@ -31,6 +32,60 @@ class MikoChat(commands.Cog):
         self.chat_engine.bind_chat_cog(self)
 
         self.load_data()
+
+    def _channel_level(self, channel) -> int:
+        parent = getattr(channel, "parent", None)
+        return self.channel_levels.get(channel.id, self.channel_levels.get(getattr(parent, "id", None), 1))
+
+    async def _flirt_on(self, guild, channel, user) -> str:
+        if not await content_access(self.bot, guild, channel, user):
+            return "Use an age-restricted server channel and complete this server's /verify first."
+        if self._channel_level(channel) == 0:
+            return "Flirting is disabled here by an administrator. Ask them to use /mikosetlevel with level 1 or 2."
+        await asyncio.to_thread(self.chat_engine.profile.enable_flirting, user.id, guild.id, channel.id)
+        return "Light, non-explicit flirting is on for you in this channel. Use /flirt off or say ‘stop flirting’ anytime."
+
+    async def _flirt_off(self, user) -> str:
+        await asyncio.to_thread(self.chat_engine.profile.disable_flirting, user.id)
+        return "Flirting is off for you everywhere. Your other channel opt-ins have been cleared."
+
+    flirt = app_commands.Group(name="flirt", description="Choose your personal Miko chat tone")
+
+    @flirt.command(name="on", description="Opt into light flirting in this verified, age-restricted channel")
+    async def flirt_on_slash(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(ephemeral=True)
+        text = await self._flirt_on(interaction.guild, interaction.channel, interaction.user)
+        await interaction.followup.send(text, ephemeral=True)
+
+    @flirt.command(name="off", description="Stop flirting everywhere; available in any channel or DM")
+    async def flirt_off_slash(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(ephemeral=True)
+        await interaction.followup.send(await self._flirt_off(interaction.user), ephemeral=True)
+
+    @flirt.command(name="status", description="Check your personal setting and this channel's access")
+    async def flirt_status_slash(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(ephemeral=True)
+        profile = self.chat_engine.profile.get(interaction.user.id, interaction.guild_id, interaction.channel_id)
+        allowed = await content_access(self.bot, interaction.guild, interaction.channel, interaction.user)
+        level = self._channel_level(interaction.channel) if interaction.channel else 0
+        opted = profile.get("flirt_opt_in") is True and self.chat_engine._profile_level(profile) > 0
+        await interaction.followup.send(
+            f"Your opt-in here: {'on' if opted else 'off'}\n"
+            f"Verified age-restricted channel: {'yes' if allowed else 'no'}\n"
+            f"Administrator chat level: {level}\n"
+            f"Flirting active: {'yes' if opted and allowed and level > 0 else 'no'}\n"
+            f"AI provider: {'configured' if self.chat_engine.ai_ready else 'not configured'}", ephemeral=True)
+
+    @commands.command(name="flirt")
+    async def flirt_prefix(self, ctx: commands.Context, mode: str = "") -> None:
+        mode = mode.strip().casefold()
+        if mode == "off":
+            text = await self._flirt_off(ctx.author)
+        elif mode == "on":
+            text = await self._flirt_on(ctx.guild, ctx.channel, ctx.author)
+        else:
+            text = "Use `flirt on` to opt in here or `flirt off` to stop everywhere."
+        await ctx.send(text, allowed_mentions=discord.AllowedMentions.none())
 
     def load_data(self) -> None:
         try:
@@ -118,7 +173,7 @@ class MikoChat(commands.Cog):
             message,
             self.bot,
             auto_chat=auto_chat,
-            admin_level=self.channel_levels.get(channel_id, 1),
+            admin_level=self._channel_level(message.channel),
             disabled=channel_id in self.disabled_channels,
             quiet=channel_id in self.quiet_channels,
         )
@@ -157,7 +212,7 @@ class MikoChat(commands.Cog):
                 message,
                 self.bot,
                 auto_chat=auto_chat,
-                admin_level=self.channel_levels.get(channel_id, 1),
+                admin_level=self._channel_level(message.channel),
                 disabled=disabled,
                 quiet=quiet,
             )
@@ -209,7 +264,7 @@ class MikoChat(commands.Cog):
         channel = channel or ctx.channel
         level = max(0, min(2, level))
 
-        if level == 2 and not channel.is_nsfw():
+        if level == 2 and not is_age_restricted(channel):
             await ctx.send(
                 "Level 2 is only available in an age-restricted channel."
             )
@@ -288,13 +343,11 @@ class MikoChat(commands.Cog):
 
     @commands.command(name="stopflirting")
     async def stop_flirting(self, ctx: commands.Context) -> None:
-        await asyncio.to_thread(self.chat_engine.profile.set, ctx.author.id, "level_cap", 0)
-        await ctx.send("Understood. Miko will keep things clean for you.")
+        await ctx.send(await self._flirt_off(ctx.author))
 
     @commands.command(name="allowflirting")
     async def allow_flirting(self, ctx: commands.Context) -> None:
-        await asyncio.to_thread(self.chat_engine.profile.set, ctx.author.id, "level_cap", 2)
-        await ctx.send("Your personal Miko level cap has been restored.")
+        await ctx.send(await self._flirt_on(ctx.guild, ctx.channel, ctx.author))
 
     @commands.command(name="askmiko", aliases=["mikoask"])
     async def ask_miko(
@@ -317,7 +370,7 @@ class MikoChat(commands.Cog):
                 message,
                 self.bot,
                 prompt=question,
-                admin_level=self.channel_levels.get(ctx.channel.id, 1),
+                admin_level=self._channel_level(ctx.channel),
             )
 
         if not result.replied or not result.text:
@@ -385,7 +438,7 @@ class MikoChat(commands.Cog):
         if not isinstance(target, discord.TextChannel):
             await interaction.response.send_message("❌ Please use this in a text channel.", ephemeral=True)
             return
-        if int(level) == 2 and not target.is_nsfw():
+        if int(level) == 2 and not is_age_restricted(target):
             await interaction.response.send_message("Level 2 is only available in an age-restricted channel.", ephemeral=True)
             return
         self.channel_levels[target.id] = int(level)
@@ -459,13 +512,13 @@ class MikoChat(commands.Cog):
 
     @app_commands.command(name="stopflirting", description="Keep Miko clean for your conversations")
     async def stop_flirting_slash(self, interaction: discord.Interaction) -> None:
-        await asyncio.to_thread(self.chat_engine.profile.set, interaction.user.id, "level_cap", 0)
-        await interaction.response.send_message("Understood. Miko will keep things clean for you.")
+        await interaction.response.defer(ephemeral=True)
+        await interaction.followup.send(await self._flirt_off(interaction.user), ephemeral=True)
 
-    @app_commands.command(name="allowflirting", description="Restore your personal Miko level cap")
+    @app_commands.command(name="allowflirting", description="Opt into light flirting in this verified, age-restricted channel")
     async def allow_flirting_slash(self, interaction: discord.Interaction) -> None:
-        await asyncio.to_thread(self.chat_engine.profile.set, interaction.user.id, "level_cap", 2)
-        await interaction.response.send_message("Your personal Miko level cap has been restored.")
+        await interaction.response.defer(ephemeral=True)
+        await interaction.followup.send(await self._flirt_on(interaction.guild, interaction.channel, interaction.user), ephemeral=True)
 
     @app_commands.command(name="askmiko", description="Ask Miko a direct question")
     @app_commands.describe(question="What you want to ask Miko")
@@ -496,7 +549,7 @@ class MikoChat(commands.Cog):
             message,
             self.bot,
             prompt=question,
-            admin_level=self.channel_levels.get(interaction.channel_id, 1),
+            admin_level=self._channel_level(interaction.channel),
         )
 
         if not result.replied or not result.text:

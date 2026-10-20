@@ -376,6 +376,8 @@ miko!mikoenabled
 miko!mikochatinfo
 ~~~
 
+Flirting is opt-in: run `/flirt on` in a verified, age-restricted server channel. Use `/flirt status` to check your setting, channel level, access and provider configuration, or `/flirt off` anywhere to stop. Prefix `miko!flirt on/off` and existing allow/stop commands also work. An administrator can set `/mikosetlevel` to 0 (clean), 1 (playful) or 2 (more confident non-explicit banter). Threads inherit their parent channel level but require their own personal opt-in.
+
 Level 2 is restricted to age-restricted Discord channels and remains non-explicit. The system also supports user memory reset/forget controls and lightweight safety checks before and after AI generation.
 
 Miko can also understand natural-language requests and, when explicitly summoned, use an existing user-facing bot command instead of forcing the user to remember exact syntax. The command tool uses the real Discord command checks and permissions, while developer/owner/system commands are blocked from AI execution.
