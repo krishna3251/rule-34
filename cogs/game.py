@@ -414,6 +414,13 @@ async def import_from_json() -> int:
 class EnhancedPaginator(View):
     """Enhanced paginator with error handling and better UX"""
 
+    async def interaction_check(self, interaction):
+        from services.access_policy import content_access
+        if await content_access(interaction.client, interaction.guild, interaction.channel, interaction.user):
+            return True
+        await interaction.response.send_message("Server verification and an age-restricted channel are required.", ephemeral=True)
+        return False
+
     def __init__(self, embeds: List[Embed], timeout: int = 300):
         super().__init__(timeout=timeout)
         self.embeds = embeds
@@ -507,30 +514,7 @@ class GameCog(commands.Cog):
         self.cleanup_task.cancel()
         logger.info("GameCog unloaded")
 
-    async def cog_app_command_error(self, interaction: Interaction,
-                                    error: app_commands.AppCommandError):
-        """Handle slash command errors"""
-        logger.error(f"Slash command error: {error}")
-
-        if isinstance(error, app_commands.CommandOnCooldown):
-            await interaction.response.send_message(
-                f"⏱️ Command on cooldown. Try again in {error.retry_after:.1f}s",
-                ephemeral=True)
-        elif isinstance(error, ValidationError):
-            await interaction.response.send_message(f"❌ {str(error)}",
-                                                    ephemeral=True)
-        elif isinstance(error, DatabaseError):
-            await interaction.response.send_message(
-                "❌ Database error occurred. Please try again later.",
-                ephemeral=True)
-        else:
-            await interaction.response.send_message(
-                "❌ An unexpected error occurred. Please try again.",
-                ephemeral=True)
-
-    # --- Slash command group ---
-    group = app_commands.Group(name="game",
-                               description="Game management commands")
+    group = app_commands.Group(name="game", description="Game management commands")
 
     @group.command(name="add", description="Add a new game to the database")
     @app_commands.describe(title="Game title",
@@ -800,7 +784,7 @@ class GameCog(commands.Cog):
             await interaction.followup.send(embed=embed)
 
         except GameBotError as e:
-            await interaction.followup.send(f"❌ Import failed: {str(e)}",
+            await interaction.followup.send("❌ Import failed. Check the configured input file and private logs.",
                                             ephemeral=True)
         except Exception as e:
             logger.error(f"Import command error: {e}")

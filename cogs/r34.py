@@ -426,6 +426,13 @@ class NSFWContent(commands.Cog):
 class NavView(discord.ui.View):
     """Navigation view for browsing results"""
 
+    async def interaction_check(self, interaction):
+        from services.access_policy import content_access
+        if await content_access(interaction.client, interaction.guild, interaction.channel, interaction.user):
+            return True
+        await interaction.response.send_message("Server verification and an age-restricted channel are required.", ephemeral=True)
+        return False
+
     def __init__(self, cog, results, query, uid, safe=False):
         super().__init__(timeout=60)
         self.cog = cog

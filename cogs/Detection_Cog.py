@@ -1,3 +1,4 @@
+from services.network_safety import public_get, read_bounded
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -219,10 +220,10 @@ class CloudflareCheckerCog(commands.Cog):
             print(f"🌐 TESTING: {site_name} - {site_url}")
             self.logger.info(f"🌐 Testing {site_name}: {site_url}")
 
-            async with self.session.get(site_url,
+            async with public_get(site_url,
                                         params=params,
                                         headers=headers) as response:
-                response_text = await response.text()
+                response_text = (await read_bounded(response, 1024 * 1024)).decode("utf-8", errors="replace")
 
                 result = self.analyze_response(response_text, response.status,
                                                site_url)
@@ -276,7 +277,7 @@ class CloudflareCheckerCog(commands.Cog):
                 "🔴 ERROR",
                 "issues": [{
                     "category": "connection_error",
-                    "matches": [str(e)],
+                    "matches": ["Request failed or was blocked by URL safety policy"],
                     "severity": "🔴 ERROR"
                 }],
                 "timestamp":
@@ -481,6 +482,7 @@ class CloudflareCheckerCog(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.command(name='cftest')
+    @commands.is_owner()
     async def cf_test_single(self, ctx, *, url=""):
         """Test a custom URL for CF/CAPTCHA"""
         if not url:
@@ -628,6 +630,7 @@ class CloudflareCheckerCog(commands.Cog):
         await interaction.followup.send(embed=embed)
 
     @app_commands.command(name="cftest", description="Test a custom URL for Cloudflare/CAPTCHA")
+    @app_commands.check(lambda interaction: interaction.client.is_owner(interaction.user))
     @app_commands.describe(url="URL to test")
     async def cftest_slash(self, interaction: discord.Interaction, url: str):
         if not url.strip():

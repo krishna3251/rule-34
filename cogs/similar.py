@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import aiohttp
+from services.network_safety import public_get, read_bounded
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -27,21 +29,21 @@ class SimilarCog(commands.Cog):
             session = getattr(self.bot, 'session', None)
             if not session:
                 raise RuntimeError('HTTP session is unavailable')
-            async with session.get(image.url, timeout=aiohttp.ClientTimeout(total=15), headers={'User-Agent': 'Rule43/1.0'}) as response:
+            async with public_get(image.url, timeout=aiohttp.ClientTimeout(total=15), headers={'User-Agent': 'Rule43/1.0'}) as response:
                 if response.status != 200:
                     raise RuntimeError(f'image download returned HTTP {response.status}')
-                data = await response.content.read(8 * 1024 * 1024 + 1)
+                data = await read_bounded(response, 8 * 1024 * 1024)
                 if len(data) > 8 * 1024 * 1024:
                     raise RuntimeError('image is larger than the 8 MB analysis limit')
         except Exception as exc:
-            await interaction.followup.send(f'Could not analyze that image: {exc}')
+            await interaction.followup.send('Could not safely analyze that image. Try a direct image attachment.')
             return
-        info = fingerprint(data)
+        info = await asyncio.to_thread(fingerprint, data)
         phash = info.get('phash')
         if not phash:
             await interaction.followup.send('I could not calculate a perceptual fingerprint for that image.')
             return
-        matches = self.manager.index.find_similar_images(phash, limit=8, max_distance=48)
+        matches = await asyncio.to_thread(self.manager.index.find_similar_images, phash, limit=8, max_distance=48)
         if not matches:
             await interaction.followup.send('🧬 No similar images are currently stored in the local index.')
             return

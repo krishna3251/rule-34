@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+from functools import wraps
 import json
 import logging
+import os
+import tempfile
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -9,8 +13,16 @@ from typing import Any
 logger = logging.getLogger("discord_bot")
 
 
+def synchronized(method):
+    @wraps(method)
+    def wrapped(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+    return wrapped
+
+
 class MikoMemory:
-    """Rukiya-style dual-scope memory: user continuity plus shared channel context."""
+    """Conversation history isolated by guild and channel, with legacy quarantine."""
 
     MEMORY_DURATION = 45 * 60
     MAX_USER_MESSAGES = 12
@@ -23,18 +35,27 @@ class MikoMemory:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.users: dict[str, dict[str, Any]] = {}
         self.conversations: dict[str, dict[str, Any]] = {}
+        self._lock = threading.RLock()
+        self.legacy = {}
         self.load()
 
+    @synchronized
     def load(self) -> None:
         if not self.path.exists():
             return
         try:
             raw = json.loads(self.path.read_text(encoding="utf-8"))
             if isinstance(raw, dict) and ("users" in raw or "conversations" in raw):
-                self.users = raw.get("users", {}) or {}
+                self.users = {}
+                self.legacy = raw.get("legacy_users", raw.get("users", {})) or {}
                 self.conversations = raw.get("conversations", {}) or {}
+                if not isinstance(self.conversations, dict):
+                    self.conversations = {}
+                if not isinstance(self.legacy, dict):
+                    self.legacy = {}
             else:
-                self.users = raw if isinstance(raw, dict) else {}
+                self.users = {}
+                self.legacy = raw if isinstance(raw, dict) else {}
                 self.conversations = {}
             self._prune_expired(save=False)
         except (OSError, ValueError, TypeError) as exc:
@@ -43,17 +64,23 @@ class MikoMemory:
             self.conversations = {}
 
     def save(self) -> None:
-        try:
-            self.path.write_text(
-                json.dumps(
-                    {"users": self.users, "conversations": self.conversations},
-                    indent=2,
-                    ensure_ascii=False,
-                ),
-                encoding="utf-8",
-            )
-        except OSError as exc:
-            logger.error("Could not save Miko memory: %s", exc)
+        # Atomic replacement prevents a crash from truncating stored history.
+        with self._lock:
+            temp_path = None
+            try:
+                with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=self.path.parent,
+                                                 prefix=".miko-", delete=False) as handle:
+                    temp_path = handle.name
+                    json.dump({"version": 2, "users": {}, "legacy_users": self.legacy,
+                               "conversations": self.conversations}, handle, ensure_ascii=False)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(temp_path, self.path)
+            except OSError:
+                logger.exception("Could not save Miko memory")
+            finally:
+                if temp_path and os.path.exists(temp_path):
+                    os.unlink(temp_path)
 
     def _prune_expired(self, save: bool = True) -> None:
         cutoff = time.time() - self.MEMORY_DURATION
@@ -72,6 +99,12 @@ class MikoMemory:
             key: value for key, value in self.conversations.items()
             if isinstance(value, dict) and valid(value)
         }
+        for bucket in self.conversations.values():
+            messages = bucket.get("messages", [])
+            if not isinstance(messages, list):
+                messages = []
+            bucket["messages"] = [m for m in messages if isinstance(m, dict)
+                                  and isinstance(m.get("time"), (int, float)) and m["time"] >= cutoff]
         if save:
             self.save()
 
@@ -79,6 +112,7 @@ class MikoMemory:
     def conversation_key(guild_id: int | None, channel_id: int) -> str:
         return f"{guild_id or 0}:{channel_id}"
 
+    @synchronized
     def add(
         self,
         user_id: int,
@@ -97,14 +131,6 @@ class MikoMemory:
             "time": now,
         }
 
-        user_bucket = self.users.setdefault(
-            str(user_id),
-            {"messages": [], "timestamp": now},
-        )
-        user_bucket["timestamp"] = now
-        user_bucket["messages"].append(entry)
-        user_bucket["messages"] = user_bucket["messages"][-self.MAX_USER_MESSAGES :]
-
         if channel_id is not None:
             key = self.conversation_key(guild_id, channel_id)
             channel_bucket = self.conversations.setdefault(
@@ -118,6 +144,7 @@ class MikoMemory:
         self._prune_expired(save=False)
         self.save()
 
+    @synchronized
     def history(
         self,
         user_id: int,
@@ -127,24 +154,18 @@ class MikoMemory:
         self._prune_expired(save=False)
 
         channel_items: list[dict[str, Any]] = []
-        user_items: list[dict[str, Any]] = []
 
         if channel_id is not None:
             bucket = self.conversations.get(self.conversation_key(guild_id, channel_id))
             if bucket:
                 channel_items = list(bucket.get("messages", []))
 
-        bucket = self.users.get(str(user_id))
-        if bucket:
-            user_items = list(bucket.get("messages", []))
-
-        combined = channel_items + [
-            item for item in user_items
-            if item not in channel_items
-        ]
+        # A user ID is not a privacy boundary: DM and guild channels stay separate.
+        combined = channel_items
         combined.sort(key=lambda item: float(item.get("time", 0) or 0))
         return combined[-self.MAX_CONTEXT_MESSAGES :]
 
+    @synchronized
     def reset(
         self,
         user_id: int,
@@ -152,6 +173,7 @@ class MikoMemory:
         channel_id: int | None = None,
     ) -> None:
         self.users.pop(str(user_id), None)
+        self.legacy.pop(str(user_id), None)
 
         if channel_id is not None:
             bucket = self.conversations.get(self.conversation_key(guild_id, channel_id))
@@ -170,6 +192,7 @@ class MikoMemory:
 
         self.save()
 
+    @synchronized
     def clear_channel(self, guild_id: int | None, channel_id: int) -> None:
         self.conversations.pop(self.conversation_key(guild_id, channel_id), None)
         self.save()

@@ -32,6 +32,8 @@ A feature-rich Discord bot built around **Rule34 content discovery**, community 
 >
 > This project is an independent bot implementation and is not presented as an official Rule34 service.
 
+> Maintenance update: see [audit fixes and deployment steps](AUDIT_FIXES.md) for access restrictions, privacy changes, legacy data handling and validation.
+
 ## ✨ What is Rule43?
 
 Rule43 is a Discord bot designed to make **R34 content discovery and community management** easier from inside Discord.

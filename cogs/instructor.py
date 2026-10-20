@@ -301,7 +301,7 @@ class Rule34DebugCog(commands.Cog):
                     await ctx.send(embed=embed)
 
             except Exception as e:
-                await ctx.send(f"❌ Error getting raw response: {e}")
+                await ctx.send("❌ Could not get the response. Check private logs.")
 
     @commands.command(name='r34mirrors')
     async def show_mirrors(self, ctx):

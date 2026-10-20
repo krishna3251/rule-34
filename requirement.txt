@@ -1,4 +1,2 @@
-discord.py>=2.3.0
-aiohttp
-praw
-python-dotenv
+# Compatibility alias; maintain dependencies in requirements.txt.
+-r requirements.txt

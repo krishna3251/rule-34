@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from services.network_safety import public_get, read_bounded, validate_url
+
+import asyncio
 import hashlib
 import io
 
@@ -42,33 +45,37 @@ class ImageSourceCog(commands.Cog):
             await interaction.response.send_message("That attachment is not an image.", ephemeral=True)
             return
 
-        await interaction.response.defer()
+        try:
+            validate_url(target)
+        except ValueError:
+            await interaction.response.send_message("Use a public image URL on a standard port.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
 
         # Keep downloaded data bounded. We store fingerprints, not the submitted image bytes.
         fingerprint_data = None
         try:
-            session = getattr(self.bot, "session", None)
-            if session:
-                async with session.get(target, timeout=aiohttp.ClientTimeout(total=15),
-                                       headers={"User-Agent": "Rule43/1.0"}) as response:
-                    if response.status == 200:
-                        content_type = response.headers.get("Content-Type", "").split(";")[0].lower()
-                        if content_type.startswith("image/"):
-                            data = await response.content.read(8 * 1024 * 1024 + 1)
-                            if len(data) <= 8 * 1024 * 1024:
-                                fingerprint_data = fingerprint(data)
+            async with public_get(target, timeout=aiohttp.ClientTimeout(total=15),
+                                   headers={"User-Agent": "Rule43/1.0"}) as response:
+                if response.status == 200:
+                    content_type = response.headers.get("Content-Type", "").split(";")[0].lower()
+                    if content_type.startswith("image/"):
+                        data = await read_bounded(response, 8 * 1024 * 1024)
+                        if len(data) <= 8 * 1024 * 1024:
+                            fingerprint_data = await asyncio.to_thread(fingerprint, data)
         except Exception:
-            fingerprint_data = None
+            await interaction.followup.send("Could not safely download that image. Try a direct public image attachment.", ephemeral=True)
+            return
 
         if fingerprint_data:
-            image_id = self.index.index.upsert_image(
+            image_id = await asyncio.to_thread(self.index.index.upsert_image,
                 sha256=fingerprint_data["sha256"],
                 phash=fingerprint_data.get("phash"),
                 width=fingerprint_data.get("width"),
                 height=fingerprint_data.get("height"),
                 mime_type=fingerprint_data.get("mime_type"),
             )
-            self.index.index.add_image_source(image_id, "submitted", hashlib.sha256(target.encode()).hexdigest()[:32], target)
+            await asyncio.to_thread(self.index.index.add_image_source, image_id, "submitted", hashlib.sha256(target.encode()).hexdigest()[:32], target)
 
         matches = await self.engine.search(target, limit=5)
         if not matches:

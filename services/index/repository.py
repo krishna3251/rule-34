@@ -2,6 +2,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+from services.sqlite_utils import ClosingConnection
 import threading
 from datetime import datetime, timezone
 from typing import Any
@@ -16,7 +17,7 @@ class LocalIndex:
         self._init()
 
     def _connect(self):
-        conn = sqlite3.connect(self.path, timeout=15)
+        conn = sqlite3.connect(self.path, timeout=15, factory=ClosingConnection)
         conn.row_factory = sqlite3.Row
         return conn
 

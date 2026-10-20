@@ -17,6 +17,13 @@ logger = logging.getLogger(__name__)
 # ---------------- Pagination View ----------------
 class Paginator(discord.ui.View):
 
+    async def interaction_check(self, interaction):
+        from services.access_policy import content_access
+        if await content_access(interaction.client, interaction.guild, interaction.channel, interaction.user):
+            return True
+        await interaction.response.send_message("Server verification and an age-restricted channel are required.", ephemeral=True)
+        return False
+
     def __init__(self, embeds: List[Embed]):
         super().__init__(timeout=300)  # Increased timeout
         self.embeds = embeds
