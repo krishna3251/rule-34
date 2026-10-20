@@ -78,6 +78,8 @@ class MikoContextBuilder:
             mood=mood,
             turn_count=turn_count,
             topic_hint=topic_hint,
+            spice_level=spice_level,
+            strict=strict,
         )
         system += "\n\n" + social
 

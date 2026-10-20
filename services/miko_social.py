@@ -60,6 +60,8 @@ class MikoSocialEngine:
         mood: str,
         turn_count: int,
         topic_hint: str = "",
+        spice_level: int = 0,
+        strict: bool = False,
     ) -> str:
         state = self._state(key)
         state.turn_count = max(state.turn_count + 1, turn_count)
@@ -75,9 +77,16 @@ class MikoSocialEngine:
             "be warm and conversational without sounding scripted",
             "keep the reply crisp but add personality",
         )
+        grounded = strict or mood in {"serious", "concerned"} or intent in {"help", "coding", "search", "action", "serious"}
+        teasing_allowed = spice_level > 0 and not grounded
+        if grounded:
+            style_cycle = ("answer directly with calm warmth", "be clear, grounded and considerate")
+        elif teasing_allowed:
+            style_cycle += ("use one light, context-specific playful challenge if welcomed",
+                            "respond plainly and let the conversation breathe")
         style = style_cycle[state.turn_count % len(style_cycle)]
         if style == state.last_style:
-            style = style_cycle[(state.turn_count + 2) % len(style_cycle)]
+            style = style_cycle[(state.turn_count + 1) % len(style_cycle)]
         state.last_style = style
 
         return (
@@ -85,6 +94,7 @@ class MikoSocialEngine:
             f"User display name: {user_name[:80]}\n"
             f"Preferred interaction style for this turn: {style}.\n"
             f"Adaptive generation temperature target: {temp:.2f}.\n"
+            f"Teasing permitted this turn: {'only when welcomed' if teasing_allowed else 'no'}.\n"
             "Do not force catchphrases, emoji, compliments, teasing, or questions. "
             "Use them only when they naturally fit the exchange.\n"
             "Avoid repeating the same opening, sentence shape, joke, or sign-off. "
