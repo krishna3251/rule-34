@@ -57,9 +57,9 @@ class MikoResponseProcessor:
     @staticmethod
     def fallback(reason: str) -> str:
         return {
-            "empty": "Ara ara~ My thoughts wandered off for a moment.",
-            "prompt_leak": "Nice try, darling. My secrets stay at the shrine.",
+            "empty": "I lost my train of thought. Try that again?",
+            "prompt_leak": "Those instructions stay private. What would you like help with?",
             "explicit_output": "Let's keep the teasing clever rather than graphic.",
             "wrong_level": "Let's keep things a little more wholesome here.",
             "repeat": "I nearly said the same thing twice. How embarrassing.",
-        }.get(reason, "Ara ara~ Something went astray, but I'm still here.")
+        }.get(reason, "Something went wrong. Try again in a moment.")

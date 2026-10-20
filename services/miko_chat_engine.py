@@ -14,6 +14,7 @@ from services.miko_emotion import MikoEmotionEngine
 from services.miko_gate import GateDecision, MikoGate
 from services.miko_memory import MikoMemory
 from services.miko_profile import MikoProfile
+from services.miko_personality import MikoPersonality
 from services.miko_response import MikoResponseProcessor
 from services.miko_router import MikoRouter
 from services.miko_tools import MikoToolContext, MikoToolRegistry
@@ -175,7 +176,7 @@ class MikoChatEngine:
     @staticmethod
     def _profile_level(profile: dict[str, Any]) -> int:
         try:
-            return max(0, min(2, int(profile.get("level_cap", 2) or 2)))
+            return max(0, min(2, int(profile.get("level_cap", 2))))
         except (TypeError, ValueError):
             return 2
 
@@ -190,12 +191,7 @@ class MikoChatEngine:
 
     @staticmethod
     def _is_stop_flirting_request(prompt: str) -> bool:
-        return prompt.casefold().strip() in {
-            "stop flirting",
-            "stop flirting please",
-            "don't flirt",
-            "dont flirt",
-        }
+        return MikoPersonality.wants_clean_chat(prompt)
 
     def _apply_local_request(self, message: Any, decision: MikoDecision) -> MikoDecision:
         if self._is_stop_flirting_request(decision.prompt):
@@ -264,7 +260,7 @@ class MikoChatEngine:
             self.gate.release_ai_slot()
 
         if not reply:
-            reply = "Ara ara~ Main ek pal ke liye soch mein kho gayi thi."
+            reply = "I lost my train of thought. Try that again?"
 
         valid, cleaned, validation_reason = self.response.validate(
             message.author.id,

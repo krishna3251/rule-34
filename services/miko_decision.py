@@ -108,7 +108,7 @@ class MikoDecisionEngine:
         user_cap = 2
         if profile is not None:
             try:
-                user_cap = max(0, min(2, int(profile.get("level_cap", 2) or 2)))
+                user_cap = max(0, min(2, int(profile.get("level_cap", 2))))
             except (TypeError, ValueError):
                 user_cap = 2
 
