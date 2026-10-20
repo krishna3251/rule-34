@@ -24,3 +24,9 @@ Validation covers saved preference behavior, English/Hinglish opt-outs, negated 
 No explicit consent means clean chat, including existing installations until users opt in. Every message and direct question rechecks consent, server verification and age-restricted channel access. Threads inherit their parent's administrator level and age restriction but require a separate user opt-in. An administrator's level 0 always wins. Losing access during generation discards the pending flirty response and uses a clean retry. Natural-language stop requests clear every opt-in; enabling another channel later does not revive those old opt-ins.
 
 Restart/redeploy and allow command sync to finish. In the chosen channel, complete `/verify`, have an administrator set `/mikosetlevel` to 1 or 2, then use `/flirt on`. Use `/flirt status` if replies stay clean. AI “configured” indicates a configured provider, not a verified live API connection. Live output quality has not been tested with production credentials.
+
+## Yae Miko-inspired voice
+
+Miko's voice now explicitly uses a composed, feminine, slyly amused direction inspired by Yae Miko from Genshin Impact. The style favors elegant mischief, dry observations and measured comebacks over bubbly anime mannerisms, constant pet names or repeated “Ara ara” openings. Original English/Hinglish examples guide cadence without copying game dialogue. Feminine Hindi verbs remain explicit; possessives follow the noun's gender.
+
+The character voice applies to clean chat too: wit does not require flirting. Opt-in flirting remains non-explicit, while practical help and vulnerable conversations receive direct, considerate replies. No commands, model providers, access restrictions or stored data formats change in this voice update. Existing regression tests check runtime compatibility and controls; they do not establish live-model character fidelity.
