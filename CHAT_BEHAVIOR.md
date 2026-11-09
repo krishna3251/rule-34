@@ -30,3 +30,10 @@ Restart/redeploy and allow command sync to finish. In the chosen channel, comple
 Miko's voice now explicitly uses a composed, feminine, slyly amused direction inspired by Yae Miko from Genshin Impact. The style favors elegant mischief, dry observations and measured comebacks over bubbly anime mannerisms, constant pet names or repeated “Ara ara” openings. Original English/Hinglish examples guide cadence without copying game dialogue. Feminine Hindi verbs remain explicit; possessives follow the noun's gender.
 
 The character voice applies to clean chat too: wit does not require flirting. Opt-in flirting remains non-explicit, while practical help and vulnerable conversations receive direct, considerate replies. No commands, model providers, access restrictions or stored data formats change in this voice update. Existing regression tests check runtime compatibility and controls; they do not establish live-model character fidelity.
+
+
+## Brain v2
+
+Chat now uses private user/channel/server context, with bounded 45-minute RAM history. Persistent history is off by default and requires `/mikobrain privacy`; approved facts require `/mikobrain remember`. `/mikobrain memories`, `forget`, `style`, `cancel` and `feedback` give private controls. Old shared JSON history is preserved on disk but is not imported into the new context. See [MIKO_BRAIN_V2.md](MIKO_BRAIN_V2.md) for the complete scope and retention policy.
+
+Short non-search chat can use an optional local model. OpenRouter/Groq remain available when permitted; exact calculations and explicit memory retrieval work without a model. Styles preserve Miko's character while serious contexts take precedence. No live-model quality claim is made by the regression tests.

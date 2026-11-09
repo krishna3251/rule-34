@@ -33,6 +33,9 @@ class MikoChat(commands.Cog):
 
         self.load_data()
 
+    async def cog_unload(self):
+        await self.chat_engine.close()
+
     def _channel_level(self, channel) -> int:
         parent = getattr(channel, "parent", None)
         return self.channel_levels.get(channel.id, self.channel_levels.get(getattr(parent, "id", None), 1))
@@ -144,7 +147,7 @@ class MikoChat(commands.Cog):
         text: str,
         emotion_id: int,
     ) -> None:
-        image_path = self._emotion_file(emotion_id)
+        image_path = await asyncio.to_thread(self._emotion_file, emotion_id)
         if image_path is None:
             await message.reply(text, mention_author=False)
             return
@@ -315,11 +318,11 @@ class MikoChat(commands.Cog):
         await ctx.send(
             "Miko Chat\n"
             f"Auto-chat: {channel.mention if channel else 'Not configured'}\n"
-            f"AI: {'connected' if self.chat_engine.ai_ready else 'not configured'}\n"
+            f"AI: {'configured' if self.chat_engine.ai_ready else 'not configured'}\n"
             f"Primary: {self.chat_engine.provider} / {self.chat_engine.model}\n"
             f"Live web: {'enabled' if self.chat_engine.web_search_ready else 'unavailable'}\n"
             f"Agent tools: {len(self.chat_engine.tool_names)}\n"
-            "Memory: current channel context / 45 min expiry\n"
+            "Memory: private user/channel context / 45 min expiry; /mikobrain controls\n"
             f"Channel level: {level}\n"
             f"Disabled: {disabled}\n"
             f"Quiet mode: {quiet}"
@@ -327,7 +330,7 @@ class MikoChat(commands.Cog):
 
     @commands.command(name="resetmiko", aliases=["resetmemory", "resetconvo"])
     async def reset_miko(self, ctx: commands.Context) -> None:
-        await asyncio.to_thread(self.chat_engine.reset_memory,
+        await self.chat_engine.reset_context(
             ctx.author.id,
             getattr(ctx.guild, "id", None),
             ctx.channel.id,
@@ -336,7 +339,7 @@ class MikoChat(commands.Cog):
 
     @commands.command(name="forgetmiko", aliases=["forgetme"])
     async def forget_miko(self, ctx: commands.Context) -> None:
-        await asyncio.to_thread(self.chat_engine.forget_user, ctx.author.id)
+        await self.chat_engine.clear_user(ctx.author.id)
         await ctx.send(
             "Your stored Miko memory and profile have been deleted."
         )
@@ -360,6 +363,7 @@ class MikoChat(commands.Cog):
             pass
 
         message = DirectMessage()
+        message.id = ctx.message.id
         message.author = ctx.author
         message.channel = ctx.channel
         message.guild = ctx.guild
@@ -379,7 +383,7 @@ class MikoChat(commands.Cog):
             )
             return
 
-        image_path = self._emotion_file(result.emotion_id)
+        image_path = await asyncio.to_thread(self._emotion_file, result.emotion_id)
         if image_path is None:
             await ctx.send(result.text)
             return
@@ -483,11 +487,11 @@ class MikoChat(commands.Cog):
         await interaction.response.send_message(
             "Miko Chat\n"
             f"Auto-chat: {channel.mention if channel else 'Not configured'}\n"
-            f"AI: {'connected' if self.chat_engine.ai_ready else 'not configured'}\n"
+            f"AI: {'configured' if self.chat_engine.ai_ready else 'not configured'}\n"
             f"Primary: {self.chat_engine.provider} / {self.chat_engine.model}\n"
             f"Live web: {'enabled' if self.chat_engine.web_search_ready else 'unavailable'}\n"
             f"Agent tools: {len(self.chat_engine.tool_names)}\n"
-            "Memory: current channel context / 45 min expiry\n"
+            "Memory: private user/channel context / 45 min expiry; /mikobrain controls\n"
             f"Channel level: {level}\n"
             f"Disabled: {disabled}\n"
             f"Quiet mode: {quiet}"
@@ -495,17 +499,19 @@ class MikoChat(commands.Cog):
 
     @app_commands.command(name="resetmiko", description="Clear your Miko conversation memory")
     async def reset_miko_slash(self, interaction: discord.Interaction) -> None:
-        await asyncio.to_thread(self.chat_engine.reset_memory,
+        await interaction.response.defer(ephemeral=True)
+        await self.chat_engine.reset_context(
             interaction.user.id,
             interaction.guild_id,
             interaction.channel_id,
         )
-        await interaction.response.send_message("Miko memory cleared for you.", ephemeral=True)
+        await interaction.followup.send("Miko memory cleared for you.", ephemeral=True)
 
     @app_commands.command(name="forgetmiko", description="Delete your stored Miko memory and profile")
     async def forget_miko_slash(self, interaction: discord.Interaction) -> None:
-        await asyncio.to_thread(self.chat_engine.forget_user, interaction.user.id)
-        await interaction.response.send_message(
+        await interaction.response.defer(ephemeral=True)
+        await self.chat_engine.clear_user(interaction.user.id)
+        await interaction.followup.send(
             "Your stored Miko memory and profile have been deleted.",
             ephemeral=True,
         )
@@ -539,6 +545,7 @@ class MikoChat(commands.Cog):
             pass
 
         message = DirectMessage()
+        message.id = interaction.id
         message.author = interaction.user
         message.channel = interaction.channel
         message.guild = interaction.guild
@@ -558,7 +565,7 @@ class MikoChat(commands.Cog):
             )
             return
 
-        image_path = self._emotion_file(result.emotion_id)
+        image_path = await asyncio.to_thread(self._emotion_file, result.emotion_id)
         if image_path is None:
             await interaction.followup.send(result.text)
             return

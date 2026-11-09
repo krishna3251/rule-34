@@ -1,0 +1,338 @@
+{
+  "baseline": {
+    "extensions": [
+      "cogs.Detection_Cog",
+      "cogs.game",
+      "cogs.image_source",
+      "cogs.index_admin",
+      "cogs.instructor",
+      "cogs.miko_chat",
+      "cogs.nutaku",
+      "cogs.personality",
+      "cogs.r34",
+      "cogs.roleplay_cog_sqlite",
+      "cogs.search",
+      "cogs.similar",
+      "cogs.verification"
+    ],
+    "prefix_commands": {
+      "cfstatus": [],
+      "mikosetlevel": [
+        "setlevel"
+      ],
+      "r34girl": [],
+      "r34debug": [],
+      "allowflirting": [],
+      "r34anime": [],
+      "cftest": [],
+      "r34milf": [],
+      "verify": [],
+      "r34mirrors": [],
+      "r34hentai": [],
+      "search": [
+        "find"
+      ],
+      "verification_stats": [],
+      "r34debugraw": [],
+      "r34furry": [],
+      "verification_status": [
+        "verifystatus",
+        "vstatus"
+      ],
+      "askmiko": [
+        "mikoask"
+      ],
+      "force_verify": [],
+      "flirt": [],
+      "trending": [],
+      "r34debughelp": [],
+      "fav": [],
+      "mikodisabled": [
+        "disable"
+      ],
+      "mikoenabled": [
+        "enable"
+      ],
+      "r34": [
+        "rule34"
+      ],
+      "mikoquiet": [
+        "quiet"
+      ],
+      "stats": [
+        "botinfo",
+        "info"
+      ],
+      "r34random": [],
+      "r34help": [],
+      "uptime": [],
+      "mikochatinfo": [
+        "chatinfo"
+      ],
+      "cfhelp": [],
+      "cfcheck": [],
+      "cfdetail": [],
+      "mood": [],
+      "resetmiko": [
+        "resetconvo",
+        "resetmemory"
+      ],
+      "mikounsetchat": [
+        "unsetchat"
+      ],
+      "ping": [
+        "latency"
+      ],
+      "dev": [
+        "developer"
+      ],
+      "dev reload": [
+        "r"
+      ],
+      "dev sync": [],
+      "dev eval": [],
+      "dev shutdown": [
+        "exit",
+        "stop"
+      ],
+      "forgetmiko": [
+        "forgetme"
+      ],
+      "mikosetchat": [
+        "setchat"
+      ],
+      "stopflirting": []
+    },
+    "slash_roots": [
+      "addcharacter",
+      "allowflirting",
+      "askmiko",
+      "cfcheck",
+      "cfdetail",
+      "cfhelp",
+      "cfstatus",
+      "cftest",
+      "clearhistory",
+      "endroleplay",
+      "fav",
+      "flirt",
+      "force_verify",
+      "forgetmiko",
+      "game",
+      "help",
+      "indexstats",
+      "listcharacters",
+      "mikochatinfo",
+      "mikodisabled",
+      "mikoenabled",
+      "mikoquiet",
+      "mikosetchat",
+      "mikosetlevel",
+      "mikounsetchat",
+      "mood",
+      "nsfw",
+      "nutaku",
+      "ping",
+      "r34",
+      "r34anime",
+      "r34debug",
+      "r34debughelp",
+      "r34debugraw",
+      "r34furry",
+      "r34girl",
+      "r34help",
+      "r34hentai",
+      "r34milf",
+      "r34mirrors",
+      "r34random",
+      "r34search",
+      "random",
+      "resetmiko",
+      "roleplay",
+      "search",
+      "setrpchannel",
+      "similar",
+      "source",
+      "sourcehealth",
+      "stats",
+      "stopflirting",
+      "trending",
+      "uptime",
+      "verification_stats",
+      "verification_status",
+      "verify"
+    ]
+  },
+  "updated": {
+    "extensions": [
+      "cogs.Detection_Cog",
+      "cogs.game",
+      "cogs.image_source",
+      "cogs.index_admin",
+      "cogs.instructor",
+      "cogs.miko_brain",
+      "cogs.miko_chat",
+      "cogs.nutaku",
+      "cogs.personality",
+      "cogs.r34",
+      "cogs.roleplay_cog_sqlite",
+      "cogs.search",
+      "cogs.similar",
+      "cogs.verification"
+    ],
+    "prefix_commands": {
+      "r34help": [],
+      "dev": [
+        "developer"
+      ],
+      "dev reload": [
+        "r"
+      ],
+      "dev eval": [],
+      "dev shutdown": [
+        "exit",
+        "stop"
+      ],
+      "dev sync": [],
+      "stopflirting": [],
+      "cfdetail": [],
+      "mikosetchat": [
+        "setchat"
+      ],
+      "mood": [],
+      "cftest": [],
+      "forgetmiko": [
+        "forgetme"
+      ],
+      "ping": [
+        "latency"
+      ],
+      "mikounsetchat": [
+        "unsetchat"
+      ],
+      "cfhelp": [],
+      "mikodisabled": [
+        "disable"
+      ],
+      "cfcheck": [],
+      "uptime": [],
+      "r34": [
+        "rule34"
+      ],
+      "stats": [
+        "botinfo",
+        "info"
+      ],
+      "search": [
+        "find"
+      ],
+      "mikosetlevel": [
+        "setlevel"
+      ],
+      "r34random": [],
+      "verify": [],
+      "allowflirting": [],
+      "mikoquiet": [
+        "quiet"
+      ],
+      "r34girl": [],
+      "r34anime": [],
+      "flirt": [],
+      "cfstatus": [],
+      "resetmiko": [
+        "resetconvo",
+        "resetmemory"
+      ],
+      "verification_stats": [],
+      "force_verify": [],
+      "r34milf": [],
+      "verification_status": [
+        "verifystatus",
+        "vstatus"
+      ],
+      "r34debug": [],
+      "r34hentai": [],
+      "r34mirrors": [],
+      "askmiko": [
+        "mikoask"
+      ],
+      "r34furry": [],
+      "r34debugraw": [],
+      "trending": [],
+      "mikochatinfo": [
+        "chatinfo"
+      ],
+      "fav": [],
+      "r34debughelp": [],
+      "mikoenabled": [
+        "enable"
+      ]
+    },
+    "slash_roots": [
+      "addcharacter",
+      "allowflirting",
+      "askmiko",
+      "cfcheck",
+      "cfdetail",
+      "cfhelp",
+      "cfstatus",
+      "cftest",
+      "clearhistory",
+      "endroleplay",
+      "fav",
+      "flirt",
+      "force_verify",
+      "forgetmiko",
+      "game",
+      "help",
+      "indexstats",
+      "listcharacters",
+      "mikobrain",
+      "mikochatinfo",
+      "mikodisabled",
+      "mikoenabled",
+      "mikoquiet",
+      "mikosetchat",
+      "mikosetlevel",
+      "mikounsetchat",
+      "mood",
+      "nsfw",
+      "nutaku",
+      "ping",
+      "r34",
+      "r34anime",
+      "r34debug",
+      "r34debughelp",
+      "r34debugraw",
+      "r34furry",
+      "r34girl",
+      "r34help",
+      "r34hentai",
+      "r34milf",
+      "r34mirrors",
+      "r34random",
+      "r34search",
+      "random",
+      "resetmiko",
+      "roleplay",
+      "search",
+      "setrpchannel",
+      "similar",
+      "source",
+      "sourcehealth",
+      "stats",
+      "stopflirting",
+      "trending",
+      "uptime",
+      "verification_stats",
+      "verification_status",
+      "verify"
+    ]
+  },
+  "checks": {
+    "old_commands_preserved": true,
+    "aliases_preserved": true,
+    "all_extensions_unloaded": true,
+    "network_disabled": true
+  }
+}

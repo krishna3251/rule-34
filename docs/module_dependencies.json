@@ -1,0 +1,567 @@
+{
+  "entry_point": "main.py",
+  "extension_discovery": "cogs/*.py with a setup function, loaded dynamically by MikoBot",
+  "dependencies": {
+    "main.py": [
+      "aiohttp",
+      "ast",
+      "asyncio",
+      "collections",
+      "contextlib",
+      "database",
+      "datetime",
+      "discord",
+      "discord.ext",
+      "dotenv",
+      "io",
+      "json",
+      "keep_alive",
+      "logging",
+      "os",
+      "services.access_policy",
+      "sqlite3",
+      "sys",
+      "time",
+      "traceback",
+      "typing"
+    ],
+    "database.py": [
+      "contextlib",
+      "datetime",
+      "logging",
+      "sqlite3",
+      "typing"
+    ],
+    "keep_alive.py": [
+      "datetime",
+      "flask",
+      "os",
+      "threading"
+    ],
+    "cogs/Detection_Cog.py": [
+      "aiohttp",
+      "asyncio",
+      "datetime",
+      "discord",
+      "discord.ext",
+      "json",
+      "logging",
+      "re",
+      "services.network_safety",
+      "sys"
+    ],
+    "cogs/game.py": [
+      "aiohttp",
+      "aiosqlite",
+      "asyncio",
+      "datetime",
+      "discord",
+      "discord.ext",
+      "discord.ui",
+      "dotenv",
+      "google",
+      "google.genai",
+      "json",
+      "logging",
+      "os",
+      "re",
+      "services.access_policy",
+      "traceback",
+      "typing",
+      "urllib.parse"
+    ],
+    "cogs/image_source.py": [
+      "__future__",
+      "aiohttp",
+      "asyncio",
+      "discord",
+      "discord.ext",
+      "hashlib",
+      "io",
+      "services.image_search.registry",
+      "services.index.fingerprints",
+      "services.index.manager",
+      "services.network_safety"
+    ],
+    "cogs/index_admin.py": [
+      "__future__",
+      "asyncio",
+      "discord",
+      "discord.ext",
+      "services.index.manager"
+    ],
+    "cogs/instructor.py": [
+      "aiohttp",
+      "asyncio",
+      "datetime",
+      "discord",
+      "discord.ext",
+      "json",
+      "logging",
+      "random",
+      "sys"
+    ],
+    "cogs/miko_brain.py": [
+      "discord",
+      "discord.ext",
+      "io",
+      "json",
+      "services.access_policy",
+      "services.brain.runtime",
+      "services.brain.skills"
+    ],
+    "cogs/miko_chat.py": [
+      "__future__",
+      "asyncio",
+      "discord",
+      "discord.ext",
+      "json",
+      "logging",
+      "pathlib",
+      "services.access_policy",
+      "services.miko_chat_engine"
+    ],
+    "cogs/nutaku.py": [
+      ".game",
+      "aiohttp",
+      "aiosqlite",
+      "asyncio",
+      "discord",
+      "discord.ext",
+      "dotenv",
+      "logging",
+      "os",
+      "random",
+      "re",
+      "services.access_policy",
+      "typing"
+    ],
+    "cogs/personality.py": [
+      "__future__",
+      "discord",
+      "discord.ext",
+      "services.personality"
+    ],
+    "cogs/r34.py": [
+      "aiohttp",
+      "asyncio",
+      "collections",
+      "datetime",
+      "discord",
+      "discord.ext",
+      "dotenv",
+      "os",
+      "random",
+      "services.access_policy",
+      "time",
+      "typing"
+    ],
+    "cogs/roleplay_cog_sqlite.py": [
+      "aiosqlite",
+      "asyncio",
+      "datetime",
+      "discord",
+      "discord.ext",
+      "groq",
+      "logging",
+      "os",
+      "services.access_policy",
+      "sqlite3"
+    ],
+    "cogs/search.py": [
+      "__future__",
+      "discord",
+      "discord.ext",
+      "services.search.registry"
+    ],
+    "cogs/similar.py": [
+      "__future__",
+      "aiohttp",
+      "asyncio",
+      "discord",
+      "discord.ext",
+      "services.index.fingerprints",
+      "services.index.manager",
+      "services.network_safety"
+    ],
+    "cogs/verification.py": [
+      "asyncio",
+      "datetime",
+      "discord",
+      "discord.ext",
+      "hashlib",
+      "logging",
+      "os",
+      "random",
+      "secrets",
+      "string",
+      "time"
+    ],
+    "services/access_policy.py": [
+      "asyncio"
+    ],
+    "services/brain/__init__.py": [],
+    "services/brain/config.py": [
+      "dataclasses",
+      "math",
+      "os"
+    ],
+    "services/brain/local.py": [
+      "aiohttp",
+      "asyncio",
+      "ipaddress",
+      "json",
+      "urllib.parse"
+    ],
+    "services/brain/runtime.py": [
+      "asyncio",
+      "collections",
+      "time"
+    ],
+    "services/brain/skills.py": [
+      "ast",
+      "collections",
+      "math",
+      "operator",
+      "re",
+      "time"
+    ],
+    "services/brain/store.py": [
+      "contextlib",
+      "json",
+      "re",
+      "services.brain.skills",
+      "sqlite3",
+      "threading",
+      "time"
+    ],
+    "services/image_search/__init__.py": [
+      ".engine",
+      ".models"
+    ],
+    "services/image_search/base.py": [
+      ".models",
+      "__future__",
+      "abc"
+    ],
+    "services/image_search/engine.py": [
+      ".base",
+      ".models",
+      "__future__",
+      "asyncio",
+      "logging",
+      "os",
+      "services.index.cache",
+      "services.index.manager",
+      "time"
+    ],
+    "services/image_search/models.py": [
+      "__future__",
+      "dataclasses"
+    ],
+    "services/image_search/registry.py": [
+      ".engine",
+      ".sources.saucenao",
+      ".sources.trace_moe",
+      "__future__"
+    ],
+    "services/image_search/sources/__init__.py": [
+      ".saucenao",
+      ".trace_moe"
+    ],
+    "services/image_search/sources/saucenao.py": [
+      "..base",
+      "..models",
+      "__future__",
+      "aiohttp",
+      "os"
+    ],
+    "services/image_search/sources/trace_moe.py": [
+      "..base",
+      "..models",
+      "__future__",
+      "aiohttp"
+    ],
+    "services/index/__init__.py": [
+      ".manager",
+      ".repository"
+    ],
+    "services/index/cache.py": [
+      "__future__",
+      "json",
+      "services.sqlite_utils",
+      "sqlite3",
+      "time"
+    ],
+    "services/index/fingerprints.py": [
+      "PIL",
+      "__future__",
+      "hashlib",
+      "io"
+    ],
+    "services/index/health.py": [
+      "__future__",
+      "dataclasses",
+      "services.sqlite_utils",
+      "sqlite3",
+      "time"
+    ],
+    "services/index/manager.py": [
+      ".health",
+      ".repository",
+      "__future__",
+      "os",
+      "time"
+    ],
+    "services/index/repository.py": [
+      "__future__",
+      "datetime",
+      "json",
+      "os",
+      "services.sqlite_utils",
+      "sqlite3",
+      "threading",
+      "typing"
+    ],
+    "services/miko_ai.py": [
+      "__future__",
+      "aiohttp",
+      "asyncio",
+      "collections",
+      "contextvars",
+      "dataclasses",
+      "datetime",
+      "groq",
+      "inspect",
+      "json",
+      "logging",
+      "math",
+      "os",
+      "services.brain.config",
+      "services.brain.local",
+      "services.brain.runtime",
+      "time",
+      "typing"
+    ],
+    "services/miko_chat_engine.py": [
+      "__future__",
+      "asyncio",
+      "collections",
+      "dataclasses",
+      "json",
+      "logging",
+      "os",
+      "services.access_policy",
+      "services.brain.config",
+      "services.brain.runtime",
+      "services.brain.skills",
+      "services.brain.store",
+      "services.miko_ai",
+      "services.miko_context",
+      "services.miko_decision",
+      "services.miko_emotion",
+      "services.miko_gate",
+      "services.miko_memory",
+      "services.miko_personality",
+      "services.miko_profile",
+      "services.miko_response",
+      "services.miko_router",
+      "services.miko_tools",
+      "typing"
+    ],
+    "services/miko_context.py": [
+      "__future__",
+      "json",
+      "services.brain.config",
+      "services.brain.skills",
+      "services.miko_games",
+      "services.miko_personality",
+      "services.miko_social",
+      "typing"
+    ],
+    "services/miko_decision.py": [
+      "__future__",
+      "dataclasses",
+      "services.miko_gate",
+      "services.miko_router",
+      "typing"
+    ],
+    "services/miko_emotion.py": [
+      "PIL",
+      "__future__",
+      "dataclasses",
+      "io",
+      "logging",
+      "pathlib",
+      "zipfile"
+    ],
+    "services/miko_games.py": [
+      "__future__",
+      "json",
+      "logging",
+      "os",
+      "pathlib",
+      "re",
+      "typing",
+      "xml.etree.ElementTree",
+      "zipfile"
+    ],
+    "services/miko_gate.py": [
+      "__future__",
+      "asyncio",
+      "dataclasses",
+      "datetime",
+      "logging",
+      "os",
+      "random",
+      "re",
+      "services.access_policy",
+      "services.brain.config",
+      "time",
+      "typing"
+    ],
+    "services/miko_memory.py": [
+      "__future__",
+      "functools",
+      "json",
+      "logging",
+      "os",
+      "pathlib",
+      "tempfile",
+      "threading",
+      "time",
+      "typing"
+    ],
+    "services/miko_orchestrator.py": [
+      "__future__",
+      "services.miko_chat_engine"
+    ],
+    "services/miko_personality.py": [
+      "__future__",
+      "re"
+    ],
+    "services/miko_profile.py": [
+      "__future__",
+      "copy",
+      "json",
+      "logging",
+      "os",
+      "pathlib",
+      "services.miko_memory",
+      "tempfile",
+      "threading",
+      "typing"
+    ],
+    "services/miko_response.py": [
+      "__future__",
+      "re"
+    ],
+    "services/miko_router.py": [
+      "__future__",
+      "re"
+    ],
+    "services/miko_social.py": [
+      "__future__",
+      "dataclasses",
+      "json",
+      "math",
+      "time",
+      "typing"
+    ],
+    "services/miko_tools.py": [
+      "__future__",
+      "asyncio",
+      "dataclasses",
+      "discord",
+      "discord.ext",
+      "discord.ext.commands.view",
+      "logging",
+      "services.access_policy",
+      "typing"
+    ],
+    "services/network_safety.py": [
+      "__future__",
+      "aiohttp",
+      "aiohttp.resolver",
+      "contextlib",
+      "ipaddress",
+      "socket",
+      "urllib.parse"
+    ],
+    "services/personality.py": [
+      "__future__",
+      "random"
+    ],
+    "services/search/__init__.py": [
+      ".engine",
+      ".models"
+    ],
+    "services/search/base.py": [
+      ".models",
+      "__future__",
+      "abc"
+    ],
+    "services/search/engine.py": [
+      ".base",
+      ".models",
+      "__future__",
+      "asyncio",
+      "collections.abc",
+      "logging",
+      "os",
+      "services.index.cache",
+      "services.index.manager",
+      "time"
+    ],
+    "services/search/models.py": [
+      "__future__",
+      "dataclasses",
+      "enum",
+      "typing"
+    ],
+    "services/search/registry.py": [
+      ".engine",
+      ".sources",
+      "__future__"
+    ],
+    "services/search/sources/__init__.py": [
+      ".anilist",
+      ".itch",
+      ".r34"
+    ],
+    "services/search/sources/anilist.py": [
+      "..base",
+      "..models",
+      "__future__",
+      "aiohttp",
+      "asyncio"
+    ],
+    "services/search/sources/itch.py": [
+      "..base",
+      "..models",
+      "__future__",
+      "aiohttp",
+      "asyncio"
+    ],
+    "services/search/sources/r34.py": [
+      "..base",
+      "..models",
+      "__future__",
+      "aiohttp",
+      "asyncio"
+    ],
+    "services/sqlite_utils.py": [
+      "sqlite3"
+    ]
+  },
+  "tests": [
+    "tests/test_brain_v2.py",
+    "tests/test_chat_behavior.py",
+    "tests/test_flirt_controls.py",
+    "tests/test_miko_enhancements.py",
+    "tests/test_miko_smoke.py",
+    "tests/test_security_regressions.py",
+    "tests/test_startup.py",
+    "tests/test_verification_isolation.py"
+  ]
+}

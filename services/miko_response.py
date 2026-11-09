@@ -52,6 +52,8 @@ class MikoResponseProcessor:
             return False, "", "repeat"
 
         self.previous[user_id] = cleaned
+        while len(self.previous) > 512:
+            self.previous.pop(next(iter(self.previous)))
         return True, cleaned, "ok"
 
     @staticmethod

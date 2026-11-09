@@ -647,6 +647,10 @@ class MikoBot(commands.Bot):
         """Cleanup on bot shutdown"""
         logger.info("Shutting down bot...")
 
+        chat = self.get_cog("MikoChat")
+        if chat is not None:
+            await chat.chat_engine.close()
+
         # Close aiohttp session
         if self.session:
             await self.session.close()

@@ -1,0 +1,47 @@
+{
+  "python": "3.12.14",
+  "platform": "Linux",
+  "workload": "Sequential synthetic offline calls; transport and real models excluded",
+  "routing": {
+    "n": 1000,
+    "median_ms": 0.04688,
+    "p95_ms": 0.133136
+  },
+  "deterministic_calculation": {
+    "n": 1000,
+    "median_ms": 0.000822,
+    "p95_ms": 0.001382
+  },
+  "history_lookup_100_scopes": {
+    "n": 100,
+    "median_ms": 0.03031,
+    "p95_ms": 0.090544
+  },
+  "history_write_100_scopes": {
+    "n": 100,
+    "median_ms": 0.032883,
+    "p95_ms": 0.084044
+  },
+  "database_preferences": {
+    "n": 100,
+    "median_ms": 0.155319,
+    "p95_ms": 0.425168
+  },
+  "retrieval_100_documents": {
+    "n": 50,
+    "median_ms": 0.406265,
+    "p95_ms": 0.628018
+  },
+  "fts5": true,
+  "end_to_end_deterministic": {
+    "n": 100,
+    "median_ms": 1.557752,
+    "p95_ms": 2.134974
+  },
+  "provider_operations": {},
+  "error_rate": 0.0,
+  "calculation_cache_hit_rate": 0.99,
+  "peak_process_rss_kib": 45608,
+  "first_token_ms": null,
+  "real_model_latency_ms": null
+}

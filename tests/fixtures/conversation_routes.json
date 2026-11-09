@@ -1,0 +1,19 @@
+[
+  {"text":"hello Miko", "intent":"chat"},
+  {"text":"bore ho raha hu", "intent":"chat"},
+  {"text":"kal wali baat yaad hai?", "intent":"chat"},
+  {"text":"the signal is weak", "intent":"chat"},
+  {"text":"I like this costume", "intent":"chat"},
+  {"text":"What is today's Minecraft news?", "intent":"search"},
+  {"text":"aaj ki khabar batao", "intent":"search"},
+  {"text":"आज की खबर बताओ", "intent":"search"},
+  {"text":"debug this Python code", "intent":"coding"},
+  {"text":"Valorant khelega?", "intent":"gaming"},
+  {"text":"what can you do?", "intent":"help"},
+  {"text":"I feel anxious", "intent":"serious"},
+  {"text":"aaj bahut udaas hu", "intent":"serious"},
+  {"text":"मैं उदास हूँ", "intent":"serious"},
+  {"text":"good night", "intent":"goodbye"},
+  {"text":"shubh ratri", "intent":"goodbye"},
+  {"text":"ban someone", "intent":"action"}
+]
