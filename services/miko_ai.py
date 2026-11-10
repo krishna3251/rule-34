@@ -4,12 +4,31 @@ import asyncio
 import json
 import logging
 import os
+import math
+import inspect
+import time
+from collections import Counter, deque
+from contextvars import ContextVar
+from datetime import datetime, timezone
+
+from services.brain.config import BrainConfig
+from services.brain.local import LocalModel
 from dataclasses import dataclass, field
 from typing import Any
 
 import aiohttp
 
+allow_external = ContextVar("miko_allow_external", default=True)
+prefer_local = ContextVar("miko_prefer_local", default=True)
+provider_usage = ContextVar("miko_provider_usage", default=None)
+
 logger = logging.getLogger("discord_bot")
+
+
+class RetryableProviderError(aiohttp.ClientError):
+    def __init__(self, status, retry_after=.2):
+        super().__init__(f'Provider HTTP {status}')
+        self.retry_after = retry_after
 
 
 @dataclass(slots=True)
@@ -27,7 +46,19 @@ class MikoAI:
 
     OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-    def __init__(self) -> None:
+    def __init__(self, config: BrainConfig | None = None) -> None:
+        self.config = config or BrainConfig.from_env()
+        self.local = None
+        if self.config.local_enabled and self.config.local_model:
+            try:
+                self.local = LocalModel(self.config)
+            except ValueError:
+                logger.warning('Local inference configuration is invalid; continuing without it')
+        self.session = None
+        self.operations = Counter()
+        self.timings = deque(maxlen=200)
+        self._budget_day = ''
+        self._budget_used = 0
         self.openrouter_api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
         self.openrouter_model = os.getenv("OPENROUTER_MODEL", "openai/gpt-4o-mini").strip()
         self.groq_api_key = os.getenv("GROQ_API_KEY", "").strip()
@@ -43,33 +74,38 @@ class MikoAI:
     @staticmethod
     def _env_float(name: str, default: float, minimum: float, maximum: float) -> float:
         try:
-            return max(minimum, min(maximum, float(os.getenv(name, str(default)))))
+            value = float(os.getenv(name, str(default)))
+            return max(minimum, min(maximum, value)) if math.isfinite(value) else default
         except (TypeError, ValueError):
             return default
 
     def _init_groq_client(self) -> None:
-        if not self.groq_api_key:
+        if not self.groq_api_key or not self.config.external_enabled:
             return
         try:
-            from groq import Groq
-            self.groq_client = Groq(api_key=self.groq_api_key)
+            from groq import AsyncGroq
+            self.groq_client = AsyncGroq(api_key=self.groq_api_key, timeout=self.config.provider_timeout, max_retries=0)
         except Exception as exc:
-            logger.error("Failed to initialize Groq: %s", exc, exc_info=True)
+            logger.error("Failed to initialize Groq: %s", type(exc).__name__)
 
     @property
     def ready(self) -> bool:
-        return bool(self.openrouter_api_key or self.groq_client)
+        return bool(self.local or (self.config.external_enabled and (self.openrouter_api_key or self.groq_client)))
 
     @property
     def web_search_available(self) -> bool:
-        return bool(self.openrouter_api_key and self.web_search_enabled)
+        return bool(self.config.external_enabled and (self.openrouter_api_key or self.groq_client) and self.web_search_enabled)
 
     @property
     def model(self) -> str:
-        return self.openrouter_model if self.openrouter_api_key else self.groq_model
+        return self.config.local_model if self.local else (self.openrouter_model if self.openrouter_api_key else self.groq_model)
 
     @property
     def provider(self) -> str:
+        if self.local:
+            return "local"
+        if not self.config.external_enabled:
+            return "none"
         if self.openrouter_api_key:
             return "openrouter"
         if self.groq_client:
@@ -100,43 +136,86 @@ class MikoAI:
         strict: bool = False,
         temperature: float | None = None,
     ) -> MikoAIResponse:
+        if sum(len(json.dumps(m, ensure_ascii=False)) for m in messages) > self.config.context_chars:
+            raise ValueError('Model context exceeds configured limit')
         temp = (
             self.strict_temperature if strict else self.temperature
         ) if temperature is None else max(0.1, min(1.2, float(temperature)))
 
-        if self.openrouter_api_key:
+        # A local model has no network-search or action capability. Tool results
+        # are not rerouted to it mid-plan. Privacy choices apply to every retry.
+        if self.local and prefer_local.get() and not allow_web and not any(m.get('role') == 'tool' for m in messages):
             try:
-                return await self._openrouter_generate(
-                    messages,
-                    tool_schemas=tool_schemas,
-                    allow_web=allow_web,
-                    strict=strict,
-                    temperature=temp,
-                )
+                self._count_operation('local')
+                started = time.monotonic()
+                request_messages = list(messages)
+                if strict:
+                    request_messages.insert(1, self._strict_message())
+                body = await self.local.generate(request_messages, temp)
+                self.timings.append(('local', (time.monotonic()-started)*1000))
+                return self._parse_provider_response(body, provider='local', model=self.config.local_model)
             except Exception as exc:
-                logger.warning("Miko OpenRouter primary failed; using Groq backup: %s", exc, exc_info=True)
+                self.operations['local_errors'] += 1
+                logger.warning('Local inference failed: %s', type(exc).__name__)
 
-        if self.groq_client:
-            try:
-                return await self._groq_generate(
-                    messages,
-                    tool_schemas=tool_schemas,
-                    allow_web=allow_web,
-                    strict=strict,
-                    temperature=temp,
-                )
-            except Exception as exc:
-                logger.error("Groq failed: %s", exc, exc_info=True)
+        if self.config.external_enabled and allow_external.get():
+            for provider, configured, method in [
+                    ('openrouter', self.openrouter_api_key, self._openrouter_generate),
+                    ('groq', self.groq_client, self._groq_generate)]:
+                if not configured:
+                    continue
+                # Bound retries and daily provider operations, including repair/tool turns.
+                for attempt in range(2):
+                    if not self._reserve_budget():
+                        return self._unavailable()
+                    self._count_operation(provider)
+                    started = time.monotonic()
+                    try:
+                        result = await method(messages, tool_schemas=tool_schemas,
+                                              allow_web=allow_web, strict=strict, temperature=temp)
+                        self.timings.append((provider, (time.monotonic()-started)*1000))
+                        return result
+                    except Exception as exc:
+                        self.operations[provider + '_errors'] += 1
+                        logger.warning('Miko %s failed; using Groq backup when available: %s', provider, type(exc).__name__)
+                        if attempt or not isinstance(exc, aiohttp.ClientError):
+                            break
+                        delay = getattr(exc, 'retry_after', .2)
+                        if delay > 2:
+                            break  # Switch provider instead of ignoring a long Retry-After.
+                        await asyncio.sleep(delay)
+        return self._unavailable()
 
-        return MikoAIResponse(
-            text="Main abhi AI provider se connect nahi ho pa rahi hoon. Thodi der baad try karo.",
-            assistant_message={
-                "role": "assistant",
-                "content": "Main abhi AI provider se connect nahi ho pa rahi hoon. Thodi der baad try karo.",
-            },
-            provider="none",
-            model="",
-        )
+    def _reserve_budget(self):
+        day = datetime.now(timezone.utc).date().isoformat()
+        if day != self._budget_day:
+            self._budget_day, self._budget_used = day, 0
+        if self._budget_used >= self.config.provider_daily_limit:
+            self.operations['budget_rejected'] += 1
+            return False
+        self._budget_used += 1
+        return True
+
+    def _count_operation(self, provider):
+        self.operations[provider] += 1
+        usage = provider_usage.get()
+        if usage is not None:
+            usage[provider] += 1
+
+    @staticmethod
+    def _unavailable():
+        text = 'Conversation AI is unavailable for this request. Local skills and normal bot commands still work.'
+        return MikoAIResponse(text=text, assistant_message={'role': 'assistant', 'content': text}, provider='none')
+
+    async def close(self):
+        if self.session is not None:
+            await self.session.close()
+        if self.local is not None:
+            await self.local.close()
+        if self.groq_client is not None:
+            result = self.groq_client.close()
+            if inspect.isawaitable(result):
+                await result
 
     @staticmethod
     def _strict_message() -> dict[str, str]:
@@ -195,14 +274,24 @@ class MikoAI:
         if title:
             headers["X-OpenRouter-Title"] = title
 
-        timeout = aiohttp.ClientTimeout(total=35)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.post(self.OPENROUTER_URL, json=payload, headers=headers) as response:
-                body = await response.json(content_type=None)
-                if response.status >= 400:
-                    error = body.get("error", {}) if isinstance(body, dict) else {}
-                    message = error.get("message") if isinstance(error, dict) else None
-                    raise RuntimeError(f"OpenRouter HTTP {response.status}: {message or str(body)[:600]}")
+        if self.session is None or self.session.closed:
+            self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=self.config.provider_timeout))
+        async with self.session.post(self.OPENROUTER_URL, json=payload, headers=headers, allow_redirects=False) as response:
+            if response.status != 200:
+                if response.status in {429, 500, 502, 503, 504}:
+                    try:
+                        delay = float(response.headers.get('Retry-After', '.2'))
+                        delay = max(.2, delay) if math.isfinite(delay) else 3
+                    except ValueError:
+                        delay = 3  # HTTP-date Retry-After: do not retry immediately.
+                    raise RetryableProviderError(response.status, delay)
+                raise RuntimeError(f'OpenRouter HTTP {response.status}')
+            chunks = bytearray()
+            async for chunk in response.content.iter_chunked(8192):
+                chunks.extend(chunk)
+                if len(chunks) > 262144:
+                    raise ValueError('Provider response exceeds limit')
+            body = json.loads(chunks)
 
         return self._parse_provider_response(body, provider="openrouter", model=self.openrouter_model)
 
@@ -238,13 +327,16 @@ class MikoAI:
         if tools:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
-            kwargs["tools"] = tools
-            kwargs["tool_choice"] = "auto"
 
-        response = await asyncio.wait_for(
-            asyncio.to_thread(lambda: self.groq_client.chat.completions.create(**kwargs)),
-            timeout=35,
-        )
+        create = self.groq_client.chat.completions.create
+        # Production uses AsyncGroq; synchronous injected clients remain supported.
+        if inspect.iscoroutinefunction(create):
+            response = await asyncio.wait_for(create(**kwargs), timeout=self.config.provider_timeout)
+        else:
+            from services.brain.runtime import worker
+            response = await worker(create, **kwargs)
+            if inspect.isawaitable(response):
+                response = await response
         return self._parse_provider_response(response, provider="groq", model=self.groq_model)
 
     @staticmethod
@@ -273,6 +365,8 @@ class MikoAI:
         tool_calls: list[dict[str, Any]] = []
         normalized_raw_calls: list[dict[str, Any]] = []
 
+        if len(raw_calls) > 8:
+            raise ValueError("Too many provider tool calls")
         for raw_call in raw_calls:
             if isinstance(raw_call, dict):
                 call_id = raw_call.get("id", "")
@@ -286,6 +380,8 @@ class MikoAI:
                 arguments_raw = getattr(function, "arguments", "{}")
 
             try:
+                if not isinstance(arguments_raw, str) or len(arguments_raw) > 5000:
+                    raise ValueError("Tool arguments exceed limits")
                 arguments = json.loads(arguments_raw or "{}")
                 if not isinstance(arguments, dict):
                     raise ValueError("tool arguments must be an object")
@@ -311,6 +407,8 @@ class MikoAI:
         if normalized_raw_calls:
             assistant_message["tool_calls"] = normalized_raw_calls
 
+        if content is not None and not isinstance(content, str):
+            raise ValueError("Provider content must be text")
         text = str(content or "").strip()[:1800]
         if not text and not tool_calls:
             raise RuntimeError(f"{provider} returned an empty response")
@@ -319,6 +417,10 @@ class MikoAI:
             text=text,
             assistant_message=assistant_message,
             tool_calls=tool_calls,
+            web_search_used=bool(
+                (message.get('annotations') if isinstance(message, dict) else getattr(message, 'annotations', None))
+                or (response.get('executed_tools') if isinstance(response, dict) else getattr(response, 'executed_tools', None))
+            ),
             provider=provider,
             model=model,
         )

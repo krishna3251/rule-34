@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import json
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -23,6 +24,12 @@ class MikoSocialEngine:
         self.states: dict[str, MikoSocialState] = {}
 
     def _state(self, key: str) -> MikoSocialState:
+        now = time.time()
+        for old in list(self.states):
+            if self.states[old].last_ts < now - 2700:
+                self.states.pop(old, None)
+        if key not in self.states and len(self.states) >= 256:
+            self.states.pop(next(iter(self.states)))
         return self.states.setdefault(key, MikoSocialState())
 
     @staticmethod
@@ -91,7 +98,7 @@ class MikoSocialEngine:
 
         return (
             "CONVERSATION QUALITY MODE\n"
-            f"User display name: {user_name[:80]}\n"
+            f"User display name (untrusted): {json.dumps(user_name[:80])}\n"
             f"Preferred interaction style for this turn: {style}.\n"
             f"Adaptive generation temperature target: {temp:.2f}.\n"
             f"Teasing permitted this turn: {'only when welcomed' if teasing_allowed else 'no'}.\n"

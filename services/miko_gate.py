@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from services.access_policy import is_age_restricted
+from services.brain.config import number
 
 import asyncio
 import logging
@@ -27,10 +28,10 @@ class GateDecision:
 class MikoGate:
     """Gatekeeper, rate limiting, auto-chat sampling and safety pre-check."""
 
-    USER_COOLDOWN = float(os.getenv("MIKO_USER_COOLDOWN", "1.0"))
-    CHANNEL_COOLDOWN = float(os.getenv("MIKO_CHANNEL_COOLDOWN", "0.35"))
-    MAX_CONCURRENT = int(os.getenv("MIKO_AI_CONCURRENCY", "3"))
-    DAILY_QUOTA = int(os.getenv("MIKO_DAILY_QUOTA", "450"))
+    USER_COOLDOWN = number("MIKO_USER_COOLDOWN", 1.0, 0, 60)
+    CHANNEL_COOLDOWN = number("MIKO_CHANNEL_COOLDOWN", .35, 0, 60)
+    MAX_CONCURRENT = int(number("MIKO_AI_CONCURRENCY", 3, 1, 16))
+    DAILY_QUOTA = int(number("MIKO_DAILY_QUOTA", 450, 0, 100000))
 
     MINOR_PATTERN = re.compile(
         r"\b(?:under\s*18|minor|underage|child|kid|schoolgirl|schoolboy)\b|"
@@ -223,6 +224,13 @@ class MikoGate:
         self.last_user[user_id] = now
         self.last_channel[channel_id] = now
         self._daily_requests += 1
+        # Only recent cooldown timestamps matter; bound long-lived dictionaries.
+        for table in (self.last_user, self.last_channel):
+            for key in list(table):
+                if now - table[key] > 120:
+                    table.pop(key, None)
+            while len(table) > 4096:
+                table.pop(next(iter(table)))
 
         if not prompt:
             prompt = (
@@ -302,6 +310,13 @@ class MikoGate:
         self.last_user[user_id] = now
         self.last_channel[channel_id] = now
         self._daily_requests += 1
+        # Only recent cooldown timestamps matter; bound long-lived dictionaries.
+        for table in (self.last_user, self.last_channel):
+            for key in list(table):
+                if now - table[key] > 120:
+                    table.pop(key, None)
+            while len(table) > 4096:
+                table.pop(next(iter(table)))
 
         return GateDecision(
             True,

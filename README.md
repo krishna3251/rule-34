@@ -32,6 +32,8 @@ A feature-rich Discord bot built around **Rule34 content discovery**, community 
 >
 > This project is an independent bot implementation and is not presented as an official Rule34 service.
 
+> **Miko Brain v2:** [architecture, privacy, configuration, benchmarks and rollout](MIKO_BRAIN_V2.md). Private context, approved memories, optional local inference, bounded requests and private `/mikobrain` controls.
+
 > Maintenance update: see [audit fixes and deployment steps](AUDIT_FIXES.md) for access restrictions, privacy changes, legacy data handling and validation.
 
 ## ✨ What is Rule43?
@@ -256,7 +258,7 @@ The bot also includes operational tooling for hosted deployments:
 
 ## 🌸 Miko AI Chat Architecture
 
-Rule43 uses a single Rukiya-style **Miko Chat Engine** for conversational requests. The Discord cog is only the platform adapter; the engine owns the complete chat lifecycle.
+Rule43 uses a single independent **Miko Chat Engine** for conversational requests. The Discord cog is only the platform adapter; the engine owns the complete chat lifecycle.
 
 ~~~text
 Discord Message / ~askmiko / /askmiko
@@ -278,11 +280,7 @@ Discord Message / ~askmiko / /askmiko
                 |
                 v
              Memory
-       ┌────────┴────────┐
-       |                 |
-   user scope       channel scope
-       |                 |
-       └────────┬────────┘
+       private guild/channel/user context
                 v
           Context Builder
        personality + profile
@@ -293,8 +291,8 @@ Discord Message / ~askmiko / /askmiko
         v                v
       Tools          AI Provider
                          |
-                 OpenRouter primary
-                    Groq fallback
+           optional local inference
+          OpenRouter / Groq fallback
                          |
                          v
                  Response Processor
@@ -307,7 +305,7 @@ Discord Message / ~askmiko / /askmiko
                     Discord Reply
 ~~~
 
-The **Decision Engine** is separate from generation. It decides whether the request is chat, search, coding, gaming, help, support, goodbye, or an action, along with priority, response mode, memory scope, search permission, and whether action tools may execute.
+Exact calculations, metadata and scoped retrieval run locally before model selection. The **Decision Engine** is separate from generation. It decides whether the request is chat, search, coding, gaming, help, support, goodbye, or an action, along with priority, response mode, memory scope, search permission, and whether action tools may execute.
 
 All normal messages, explicit summons, and direct `~askmiko` / `/askmiko` questions now enter the same conversational pipeline. This prevents direct-question commands from bypassing the normal safety, memory, decision, tool and response-validation layers.
 
@@ -337,7 +335,7 @@ services/
 ├── miko_chat_engine.py      # Single conversational runtime
 ├── miko_decision.py         # Rukiya-style application decisions
 ├── miko_gate.py             # Trigger, safety, limits and quota
-├── miko_memory.py           # User + channel conversation memory
+├── miko_memory.py           # Bounded private short-term context
 ├── miko_context.py          # Final prompt/context assembly
 ├── miko_personality.py      # Miko personality rules
 ├── miko_social.py           # Adaptive social behavior
@@ -380,7 +378,7 @@ Flirting is opt-in: run `/flirt on` in a verified, age-restricted server channel
 
 Level 2 is restricted to age-restricted Discord channels and remains non-explicit. The system also supports user memory reset/forget controls and lightweight safety checks before and after AI generation.
 
-Miko can also understand natural-language requests and, when explicitly summoned, use an existing user-facing bot command instead of forcing the user to remember exact syntax. The command tool uses the real Discord command checks and permissions, while developer/owner/system commands are blocked from AI execution.
+Miko can inspect server/channel metadata and explain the real command list. When explicitly summoned, the model can invoke only the read-only `ping`, `uptime`, `stats` and `mood` commands without arguments, subject to their real checks. Other actions require direct execution through the existing Discord commands. No model output authorizes a destructive action.
 
 Groq's GPT-OSS models support built-in browser search, so Miko can use live web information for current news, prices, releases, availability and other time-sensitive questions without a separate search API. The configured default model, <code>openai/gpt-oss-20b</code>, supports this capability.
 
@@ -412,7 +410,7 @@ MIKO_MAX_TOOL_ITERATIONS=3
 MIKO_MAX_TOOL_CALLS=3
 ~~~
 
-Miko uses OpenRouter as the primary chat provider and automatically falls back to Groq when the primary request fails. OpenRouter's API is OpenAI-compatible, and its server-side <code>openrouter:web_search</code> tool can be combined with normal user-defined function tools. citeturn387565search1turn387565search0turn387565search5
+Miko optionally prefers a loopback model for short non-search chat, then uses OpenRouter and Groq when external processing is configured and permitted. Provider failures degrade gracefully; exact local skills remain available offline. See [Brain configuration](MIKO_BRAIN_V2.md#configuration) for local inference and privacy controls. Existing provider web-search integration remains available for supported models.
 
 The Miko services live under:
 
@@ -492,7 +490,7 @@ python main.py
 
 ## 🔧 Configuration
 
-The project reads runtime configuration from environment variables.
+The project requires Python **3.12** and reads runtime configuration from environment variables.
 
 | Variable | Required | Purpose |
 |---|:---:|---|

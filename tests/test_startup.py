@@ -38,6 +38,10 @@ async def check():
             for name in ('on', 'off', 'status'):
                 assert main.bot.tree.get_command('flirt').get_command(name) is not None
             assert main.bot.tree.get_command('search') is not None
+            group = main.bot.tree.get_command('mikobrain')
+            assert group is not None
+            for name in ('privacy', 'remember', 'memories', 'forget', 'style', 'cancel', 'feedback', 'knowledge', 'knowledge_forget', 'status'):
+                assert group.get_command(name) is not None
             from services.access_policy import restricted
             assert restricted(main.bot.tree.get_command('game').get_command('search'))
             assert restricted(main.bot.get_command('search'))

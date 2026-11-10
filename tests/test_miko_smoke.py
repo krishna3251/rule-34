@@ -42,6 +42,7 @@ class RepositorySmokeTests(unittest.TestCase):
             if "vendor" not in path.parts
             and "__pycache__" not in path.parts
             and ".git" not in path.parts
+            and ".venv" not in path.parts
         ]
         self.assertTrue(paths)
         for path in paths:

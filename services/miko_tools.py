@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import asyncio
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
@@ -74,6 +75,10 @@ class MikoToolRegistry:
         "bulk kick",
         "wipe everyone",
     )
+
+    # Models may inspect metadata or invoke these read-only commands. All other
+    # commands stay available through their existing authenticated Discord UI.
+    AI_READ_ONLY_COMMANDS = frozenset({'ping', 'uptime', 'stats', 'mood'})
 
     def __init__(self) -> None:
         self._tools: dict[str, MikoToolSpec] = {}
@@ -218,8 +223,19 @@ class MikoToolRegistry:
                 "error": f"Missing required arguments: {', '.join(missing)}",
             }
 
+        properties = spec.parameters.get('properties', {})
+        if set(arguments) - set(properties):
+            return {'success': False, 'error': 'Unknown tool argument.'}
+        for key, value in arguments.items():
+            rule = properties[key]
+            if rule.get('type') == 'string' and (not isinstance(value, str) or len(value) > 1000):
+                return {'success': False, 'error': 'Invalid string argument.'}
+            if rule.get('type') == 'integer' and (type(value) is not int or not rule.get('minimum', 0) <= value <= rule.get('maximum', 100)):
+                return {'success': False, 'error': 'Invalid integer argument.'}
+
         try:
-            return await spec.handler(context, arguments)
+            async with asyncio.timeout(10):
+                return await spec.handler(context, arguments)
         except discord.Forbidden:
             return {
                 "success": False,
@@ -422,11 +438,22 @@ class MikoToolRegistry:
                 "error": "Developer or owner-only commands are protected.",
             }
 
+        if command.qualified_name not in self.AI_READ_ONLY_COMMANDS or command_args:
+            return {'success': False, 'error': 'This command requires direct user execution. Use its Discord command so its inputs and authorization are explicit.'}
+
         try:
             ctx = await context.bot.get_context(context.message)
             ctx.command = command
             ctx.invoked_with = command.name
             ctx.view = StringView(command_args)
+
+            # Direct leaf invocation must not skip global/content or parent checks.
+            from services.access_policy import prefix_access
+            if not await prefix_access(ctx):
+                raise commands.CheckFailure('Content access denied')
+            for parent in command.parents:
+                if not await parent.can_run(ctx):
+                    raise commands.CheckFailure('Parent command denied')
 
             await command.invoke(ctx)
         except commands.CheckFailure as exc:

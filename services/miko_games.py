@@ -167,7 +167,7 @@ class MikoGameCatalog:
             ]))
             words = set(searchable.split())
             score = (10.0 if normalized in name else 0.0) + (2.0 * len(tokens & words))
-            if self._normalize(game.get("status", "")) == "active":
+            if score > 0 and self._normalize(game.get("status", "")) == "active":
                 score += 0.15
             if score > 0:
                 scored.append((score, game))

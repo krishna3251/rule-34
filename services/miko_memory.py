@@ -30,14 +30,16 @@ class MikoMemory:
     MAX_CONTEXT_MESSAGES = 24
     MAX_CONTENT_LENGTH = 1200
 
-    def __init__(self, path: str | Path = "data/miko_memory.json") -> None:
+    def __init__(self, path: str | Path = "data/miko_memory.json", *, ephemeral: bool = False) -> None:
+        self.ephemeral = ephemeral
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.users: dict[str, dict[str, Any]] = {}
         self.conversations: dict[str, dict[str, Any]] = {}
         self._lock = threading.RLock()
         self.legacy = {}
-        self.load()
+        if not ephemeral:
+            self.load()
 
     @synchronized
     def load(self) -> None:
@@ -64,6 +66,8 @@ class MikoMemory:
             self.conversations = {}
 
     def save(self) -> None:
+        if self.ephemeral:
+            return
         # Atomic replacement prevents a crash from truncating stored history.
         with self._lock:
             temp_path = None
@@ -121,6 +125,7 @@ class MikoMemory:
         guild_id: int | None = None,
         channel_id: int | None = None,
         name: str | None = None,
+        private: bool = False,
     ) -> None:
         now = time.time()
         entry = {
@@ -132,7 +137,7 @@ class MikoMemory:
         }
 
         if channel_id is not None:
-            key = self.conversation_key(guild_id, channel_id)
+            key = self.conversation_key(guild_id, channel_id) + (f":{user_id}" if private else "")
             channel_bucket = self.conversations.setdefault(
                 key,
                 {"messages": [], "timestamp": now},
@@ -142,6 +147,9 @@ class MikoMemory:
             channel_bucket["messages"] = channel_bucket["messages"][-self.MAX_CHANNEL_MESSAGES :]
 
         self._prune_expired(save=False)
+        while len(self.conversations) > 256:
+            oldest = min(self.conversations, key=lambda k: self.conversations[k]["timestamp"])
+            self.conversations.pop(oldest)
         self.save()
 
     @synchronized
@@ -150,13 +158,14 @@ class MikoMemory:
         user_id: int,
         guild_id: int | None = None,
         channel_id: int | None = None,
+        private: bool = False,
     ) -> list[dict[str, str]]:
         self._prune_expired(save=False)
 
         channel_items: list[dict[str, Any]] = []
 
         if channel_id is not None:
-            bucket = self.conversations.get(self.conversation_key(guild_id, channel_id))
+            bucket = self.conversations.get(self.conversation_key(guild_id, channel_id) + (f":{user_id}" if private else ""))
             if bucket:
                 channel_items = list(bucket.get("messages", []))
 
@@ -175,24 +184,18 @@ class MikoMemory:
         self.users.pop(str(user_id), None)
         self.legacy.pop(str(user_id), None)
 
-        if channel_id is not None:
-            bucket = self.conversations.get(self.conversation_key(guild_id, channel_id))
-            if bucket:
-                bucket["messages"] = [
-                    msg for msg in bucket.get("messages", [])
-                    if int(msg.get("user_id", -1)) != int(user_id)
-                ]
-                bucket["timestamp"] = time.time()
-        else:
-            for bucket in self.conversations.values():
-                bucket["messages"] = [
-                    msg for msg in bucket.get("messages", [])
-                    if int(msg.get("user_id", -1)) != int(user_id)
-                ]
+        prefix = self.conversation_key(guild_id, channel_id) if channel_id is not None else None
+        for key, bucket in self.conversations.items():
+            if prefix is None or key == prefix or key == f"{prefix}:{user_id}":
+                bucket["messages"] = [msg for msg in bucket.get("messages", [])
+                                      if int(msg.get("user_id", -1)) != int(user_id)]
 
         self.save()
 
     @synchronized
     def clear_channel(self, guild_id: int | None, channel_id: int) -> None:
-        self.conversations.pop(self.conversation_key(guild_id, channel_id), None)
+        prefix = self.conversation_key(guild_id, channel_id)
+        for key in list(self.conversations):
+            if key == prefix or key.startswith(prefix + ":"):
+                self.conversations.pop(key, None)
         self.save()
