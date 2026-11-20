@@ -89,7 +89,8 @@ class RepositorySmokeTests(unittest.TestCase):
             self.assertIn(f'name="{name}"', source)
 
     def test_miko_emotion_table(self):
-        source = (ROOT / "services/miko_emotion.py").read_text(encoding="utf-8")
+        from services.miko_emotion import MikoEmotionEngine
+
         expected = {
             1: "Neutral", 2: "Smile", 3: "Happy", 4: "Wink", 5: "Laugh",
             6: "Tease", 7: "Thinking", 8: "Curious", 9: "Confused",
@@ -98,37 +99,14 @@ class RepositorySmokeTests(unittest.TestCase):
             17: "Annoyed", 18: "Pout", 19: "Nervous", 20: "Crying",
             21: "Blushing Happy", 22: "Love", 23: "Smug", 24: "Sleepy",
         }
-        for emotion_id, name in expected.items():
-            self.assertIn(f'{emotion_id}: "{name}"', source)
-
-        self.assertIn("Yae Miko Discord reaction images.zip", source)
-        self.assertIn("_extract_from_zip", source)
+        self.assertEqual(MikoEmotionEngine.EMOTIONS, expected)
 
     def test_miko_guardrails_remain(self):
         gate = (ROOT / "services/miko_gate.py").read_text(encoding="utf-8")
         personality = (ROOT / "services/miko_personality.py").read_text(encoding="utf-8")
         self.assertIn("EXPLICIT_REQUEST_PATTERN", gate)
         self.assertIn("Never describe sexual acts", personality)
-        self.assertIn("HIGH-INTELLIGENCE", personality)
-
-    def test_miko_emotion_map_is_complete(self):
-        emotion = (ROOT / "services/miko_emotion.py").read_text(encoding="utf-8")
-        for emotion_id in range(1, 25):
-            self.assertRegex(
-                emotion,
-                rf"{emotion_id}:\s+",
-                msg=f"missing emotion ID {emotion_id}",
-            )
-        self.assertIn('Path(image_dir)', emotion)
-        self.assertIn('f"{emotion_id:02d}.webp"', emotion)
-
-    def test_miko_result_carries_emotion(self):
-        source = (ROOT / "services/miko_chat_engine.py").read_text(encoding="utf-8")
-        chat = (ROOT / "cogs/miko_chat.py").read_text(encoding="utf-8")
-        self.assertIn("emotion_id: int = 1", source)
-        self.assertIn("emotion_id=emotion.id", source)
-        self.assertIn("filename=f\"miko_{emotion_id:02d}{image_path.suffix}\"", chat)
-        self.assertIn("discord.File", chat)
+        self.assertIn("if a follow-up clearly points", personality.casefold())
 
     def test_miko_command_bridges(self):
         search_prefix = command_names("cogs/search.py", prefix=True)

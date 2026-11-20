@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from services.access_policy import is_age_restricted
 from services.brain.config import number
+from services.miko_router import MikoRouter
 
 import asyncio
 import logging
@@ -89,26 +90,24 @@ class MikoGate:
         if lowered == "miko":
             return "", True
 
-        for prefix in ("miko ", "miko,", "miko:", "miko -"):
+        for prefix in ("miko - ", "miko ", "miko,", "miko:"):
             if lowered.startswith(prefix):
-                return content[len(prefix):].strip(" ,:~-"), True
+                return content[len(prefix):].strip(" ,:"), True
 
         return None, False
 
     @staticmethod
     def _mood_for(text: str) -> str:
-        lowered = text.casefold()
-        if any(word in lowered for word in (
-            "sad", "hurt", "cry", "stressed", "scared", "worried", "lonely"
-        )):
+        lowered = text.casefold().replace("’", "'")
+        if MikoRouter.SUPPORT.search(lowered) or re.search(
+            r"\b(?:sad|hurt|cry|stressed|scared|worried|lonely)\b", lowered
+        ):
             return "concerned"
-        if any(word in lowered for word in (
-            "congrats", "won", "passed", "fixed", "happy", "yay", "lets go"
-        )):
+        if re.search(r"\b(?:congrats|won|passed|fixed|happy|yay|let[']?s go)\b", lowered) and not re.search(
+            r"\b(?:not|never|didn't|wasn't)\s+(?:really\s+)?(?:won|passed|fixed|happy)\b", lowered
+        ):
             return "happy"
-        if any(word in lowered for word in (
-            "help", "problem", "error", "broken", "serious", "confused"
-        )):
+        if re.search(r"\b(?:help|problem|error|broken|serious|confused)\b", lowered):
             return "serious"
         return "playful"
 
@@ -176,10 +175,11 @@ class MikoGate:
             logger.debug("Unable to resolve command context", exc_info=True)
 
         prompt, summoned = self._extract_trigger(message, bot)
-        if prompt is None and not auto_chat:
+        if prompt is None and (not auto_chat or not message.content.strip()):
             return GateDecision(False, reason="not_summoned")
 
-        text = prompt if prompt else message.content
+        text = message.content.strip() if prompt is None else prompt
+        prompt = text
         safety_reason = self._precheck(text)
 
         if safety_reason == "minor_related":
@@ -235,7 +235,7 @@ class MikoGate:
         if not prompt:
             prompt = (
                 "The user casually summoned you. Greet them naturally, use the "
-                "recent channel context when useful, and leave room for the user "
+                "recent private conversation context when useful, and leave room for the user "
                 "to continue instead of ending with a canned question."
             )
 

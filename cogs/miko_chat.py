@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import asyncio
-
+import io
 import json
 import logging
+from collections import OrderedDict
+from contextlib import suppress
+from functools import partial
 from pathlib import Path
+from time import monotonic
+from types import SimpleNamespace
 
 import discord
 from discord.ext import commands
@@ -19,6 +24,8 @@ logger = logging.getLogger("discord_bot")
 class MikoChat(commands.Cog):
     """Thin Discord adapter for the single Miko Chat Engine."""
 
+    WAIT_SECONDS = 2.0
+
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.data_file = Path("data/miko_chat.json")
@@ -28,6 +35,7 @@ class MikoChat(commands.Cog):
         self.disabled_channels: set[int] = set()
         self.quiet_channels: set[int] = set()
         self.channel_levels: dict[int, int] = {}
+        self.recent_images: OrderedDict[tuple[int, int, int], tuple[int, float]] = OrderedDict()
         self.chat_engine = MikoChatEngine()
         self.chat_engine.bind_chat_cog(self)
 
@@ -137,95 +145,105 @@ class MikoChat(commands.Cog):
         except OSError as exc:
             logger.error("Could not save Miko configuration: %s", exc)
 
-    def _emotion_file(self, emotion_id: int) -> Path | None:
-        path = self.chat_engine.emotion.image_path(emotion_id)
-        return path if path.is_file() else None
+    async def _send_chat(self, send, result, scope):
+        emotion_id = result.emotion_id
+        last = self.recent_images.get(scope)
+        repeated = last and last[0] == emotion_id and monotonic() - last[1] < 2700
+        if result.attach_emotion and not repeated:
+            picture = await asyncio.to_thread(self.chat_engine.emotion.public_image, emotion_id)
+            if picture:
+                with io.BytesIO(picture) as buffer:
+                    file = discord.File(buffer, filename=f"miko_{emotion_id:02d}.webp")
+                    try:
+                        sent = await send(result.text, file=file, allowed_mentions=discord.AllowedMentions.none())
+                    except discord.HTTPException as exc:
+                        if exc.status not in {403, 413} and exc.code != 40005:
+                            raise
+                    else:
+                        self.recent_images[scope] = (emotion_id, monotonic())
+                        self.recent_images.move_to_end(scope)
+                        if len(self.recent_images) > 256:
+                            self.recent_images.popitem(last=False)
+                        return sent
+                    finally:
+                        file.close()
+        return await send(result.text, allowed_mentions=discord.AllowedMentions.none())
 
-    async def _reply_with_emotion(
-        self,
-        message: discord.Message,
-        text: str,
-        emotion_id: int,
-    ) -> None:
-        image_path = await asyncio.to_thread(self._emotion_file, emotion_id)
-        if image_path is None:
-            await message.reply(text, mention_author=False)
-            return
+    @staticmethod
+    async def _try_reaction(action, *args):
+        try:
+            async with asyncio.timeout(2.0):
+                await action(*args)
+        except (discord.HTTPException, TimeoutError):
+            pass
 
-        file = discord.File(
-            image_path,
-            filename=f"miko_{emotion_id:02d}{image_path.suffix}",
-        )
-        await message.reply(
-            text,
-            file=file,
-            mention_author=False,
-        )
+    async def _deliver_chat(self, request, send, message, *, source=None, direct=False):
+        waiting_task = None
+        attempted = False
+        started = None
+        result = sent = None
 
-    async def _handle_message(self, message: discord.Message) -> None:
-        if message.author.bot:
-            return
+        async def wait_reaction():
+            nonlocal attempted
+            await asyncio.sleep(self.WAIT_SECONDS)
+            attempted = True
+            await self._try_reaction(source.add_reaction, "⏳")
 
-        auto_chat = (
-            bool(message.guild)
-            and self.chat_channels.get(message.guild.id) == message.channel.id
-        )
-        channel_id = message.channel.id
+        def start_wait():
+            nonlocal started, waiting_task
+            started = monotonic()
+            if source is not None:
+                waiting_task = asyncio.create_task(wait_reaction())
 
-        result = await self.chat_engine.handle(
-            message,
-            self.bot,
-            auto_chat=auto_chat,
-            admin_level=self._channel_level(message.channel),
-            disabled=channel_id in self.disabled_channels,
-            quiet=channel_id in self.quiet_channels,
-        )
+        try:
+            result = await request(on_wait=start_wait)
+            waited = started is not None and monotonic() - started >= self.WAIT_SECONDS
+            if result.replied and result.text:
+                scope = (getattr(message.guild, "id", 0) or 0, message.channel.id, message.author.id)
+                sent = await self._send_chat(send, result, scope)
+            elif direct or (started is not None and result.reason == "timeout"):
+                status = {
+                    "channel_disabled": "Miko chat is disabled in this channel.",
+                    "timeout": "I took too long to answer. Try again in a moment.",
+                    "busy": "I’m still working on another request. Try again in a moment.",
+                    "user_cooldown": "Give me a moment before asking again.",
+                    "channel_cooldown": "Give me a moment before asking again.",
+                    "daily_quota": "Miko’s daily chat limit has been reached.",
+                }
+                await send(status.get(result.reason, "I couldn’t answer that. Try again in a moment."),
+                           allowed_mentions=discord.AllowedMentions.none())
+        finally:
+            if waiting_task is not None:
+                if not attempted:
+                    waiting_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await waiting_task
+                else:
+                    try:
+                        await waiting_task
+                    finally:
+                        await self._try_reaction(source.remove_reaction, "⏳", self.bot.user)
 
-        if result.replied and result.text:
-            await self._reply_with_emotion(
-                message,
-                result.text,
-                result.emotion_id,
-            )
+        if waited and sent is not None and result.completed:
+            target = source if source is not None else sent
+            await self._try_reaction(target.add_reaction, "✅")
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
-        if message.author.bot:
-            return
-
-        auto_chat = (
-            bool(message.guild)
-            and self.chat_channels.get(message.guild.id) == message.channel.id
-        )
         channel_id = message.channel.id
-        disabled = channel_id in self.disabled_channels
+        if message.author.bot or channel_id in self.disabled_channels:
+            return
+        auto_chat = bool(message.guild) and self.chat_channels.get(message.guild.id) == channel_id
         quiet = channel_id in self.quiet_channels
-
-        candidate = await self.chat_engine.is_candidate(
-            message,
-            self.bot,
-            auto_chat=auto_chat,
-            quiet=quiet,
-        )
-        if disabled or not candidate:
+        if not await self.chat_engine.is_candidate(message, self.bot, auto_chat=auto_chat, quiet=quiet):
             return
 
+        request = partial(self.chat_engine.handle, message, self.bot, auto_chat=auto_chat,
+                          admin_level=self._channel_level(message.channel),
+                          disabled=channel_id in self.disabled_channels, quiet=quiet)
         async with message.channel.typing():
-            result = await self.chat_engine.handle(
-                message,
-                self.bot,
-                auto_chat=auto_chat,
-                admin_level=self._channel_level(message.channel),
-                disabled=disabled,
-                quiet=quiet,
-            )
-
-        if result.replied and result.text:
-            await self._reply_with_emotion(
-                message,
-                result.text,
-                result.emotion_id,
-            )
+            await self._deliver_chat(request, partial(message.reply, mention_author=False),
+                                     message, source=message)
 
     @commands.command(name="mikosetchat", aliases=["setchat"])
     @commands.has_permissions(administrator=True)
@@ -308,10 +326,10 @@ class MikoChat(commands.Cog):
 
     @commands.command(name="mikochatinfo", aliases=["chatinfo"])
     async def miko_chat_info(self, ctx: commands.Context) -> None:
-        channel_id = self.chat_channels.get(ctx.guild.id)
+        channel_id = self.chat_channels.get(ctx.guild.id) if ctx.guild else None
         channel = ctx.guild.get_channel(channel_id) if channel_id else None
 
-        level = self.channel_levels.get(ctx.channel.id, 1)
+        level = self._channel_level(ctx.channel)
         disabled = "yes" if ctx.channel.id in self.disabled_channels else "no"
         quiet = "yes" if ctx.channel.id in self.quiet_channels else "no"
 
@@ -359,42 +377,13 @@ class MikoChat(commands.Cog):
         *,
         question: str,
     ) -> None:
-        class DirectMessage:
-            pass
-
-        message = DirectMessage()
-        message.id = ctx.message.id
-        message.author = ctx.author
-        message.channel = ctx.channel
-        message.guild = ctx.guild
-        message.content = question.strip()
-
+        message = SimpleNamespace(id=ctx.message.id, author=ctx.author, channel=ctx.channel,
+                                  guild=ctx.guild, content=question.strip())
+        request = partial(self.chat_engine.ask_direct, message, self.bot, prompt=message.content,
+                          admin_level=self._channel_level(ctx.channel),
+                          disabled=ctx.channel.id in self.disabled_channels)
         async with ctx.typing():
-            result = await self.chat_engine.ask_direct(
-                message,
-                self.bot,
-                prompt=question,
-                admin_level=self._channel_level(ctx.channel),
-            )
-
-        if not result.replied or not result.text:
-            await ctx.send(
-                f"Miko did not respond ({result.reason or 'no_response'})."
-            )
-            return
-
-        image_path = await asyncio.to_thread(self._emotion_file, result.emotion_id)
-        if image_path is None:
-            await ctx.send(result.text)
-            return
-
-        await ctx.send(
-            result.text,
-            file=discord.File(
-                image_path,
-                filename=f"miko_{result.emotion_id:02d}{image_path.suffix}",
-            ),
-        )
+            await self._deliver_chat(request, ctx.send, message, source=ctx.message, direct=True)
 
     @app_commands.command(name="mikosetchat", description="Set Miko auto-chat in a channel")
     @app_commands.describe(channel="Channel where Miko should automatically chat")
@@ -481,7 +470,7 @@ class MikoChat(commands.Cog):
     async def miko_chat_info_slash(self, interaction: discord.Interaction) -> None:
         channel_id = self.chat_channels.get(interaction.guild_id or 0)
         channel = interaction.guild.get_channel(channel_id) if interaction.guild and channel_id else None
-        level = self.channel_levels.get(interaction.channel_id, 1)
+        level = self._channel_level(interaction.channel)
         disabled = "yes" if interaction.channel_id in self.disabled_channels else "no"
         quiet = "yes" if interaction.channel_id in self.quiet_channels else "no"
         await interaction.response.send_message(
@@ -541,42 +530,20 @@ class MikoChat(commands.Cog):
             )
             return
 
-        class DirectMessage:
-            pass
+        message = SimpleNamespace(id=interaction.id, author=interaction.user,
+                                  channel=interaction.channel, guild=interaction.guild, content=question)
+        await interaction.response.defer(thinking=True)
+        request = partial(self.chat_engine.ask_direct, message, self.bot, prompt=question,
+                          admin_level=self._channel_level(interaction.channel),
+                          disabled=interaction.channel.id in self.disabled_channels)
+        try:
+            await self._deliver_chat(request, partial(interaction.followup.send, wait=True), message, direct=True)
+        except asyncio.CancelledError:
+            with suppress(discord.HTTPException, TimeoutError):
+                async with asyncio.timeout(2.0):
+                    await interaction.delete_original_response()
+            raise
 
-        message = DirectMessage()
-        message.id = interaction.id
-        message.author = interaction.user
-        message.channel = interaction.channel
-        message.guild = interaction.guild
-        message.content = question
-
-        await interaction.response.defer()
-        result = await self.chat_engine.ask_direct(
-            message,
-            self.bot,
-            prompt=question,
-            admin_level=self._channel_level(interaction.channel),
-        )
-
-        if not result.replied or not result.text:
-            await interaction.followup.send(
-                f"Miko did not respond ({result.reason or 'no_response'})."
-            )
-            return
-
-        image_path = await asyncio.to_thread(self._emotion_file, result.emotion_id)
-        if image_path is None:
-            await interaction.followup.send(result.text)
-            return
-
-        await interaction.followup.send(
-            result.text,
-            file=discord.File(
-                image_path,
-                filename=f"miko_{result.emotion_id:02d}{image_path.suffix}",
-            ),
-        )
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(MikoChat(bot))

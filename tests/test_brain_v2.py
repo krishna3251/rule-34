@@ -254,7 +254,7 @@ class EngineTests(unittest.IsolatedAsyncioTestCase):
         self.engine.ai._openrouter_generate = AsyncMock(side_effect=AssertionError('Privacy breach'))
         self.engine.store.set_preferences((10,20,1), external=False)
         await self.ask('hello')
-        await self.ask('hello again')  # repeated fallback causes validation repair
+        await self.ask('hello again')
         self.engine.ai._openrouter_generate.assert_not_awaited()
 
     async def test_db_failure_fails_closed_before_model(self):

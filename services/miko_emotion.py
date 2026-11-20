@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import hashlib
 import io
+import json
 import logging
+import re
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
+
+from PIL import Image
 
 logger = logging.getLogger("discord_bot")
 
@@ -16,6 +21,7 @@ class MikoEmotion:
     id: int
     name: str
     reason: str = ""
+    score: int = 0
 
 
 class MikoEmotionEngine:
@@ -52,7 +58,7 @@ class MikoEmotionEngine:
         3: (
             ("congrats", 4), ("congratulations", 4), ("won", 3),
             ("passed", 3), ("yay", 3), ("happy", 3), ("great news", 4),
-            ("success", 3),
+            ("success", 3), ("jeet gaya", 5), ("jeet gayi", 5), ("jeet gaye", 5),
         ),
         5: (
             ("haha", 4), ("lmao", 4), ("lol", 3), ("funny", 2),
@@ -129,11 +135,12 @@ class MikoEmotionEngine:
         ),
         24: (
             ("sleepy", 6), ("goodnight", 5), ("good night", 5),
-            ("gn", 4), ("bed", 2), ("drowsy", 5),
+            ("gn", 4), ("bed", 2), ("drowsy", 5), ("shubh ratri", 5), ("शुभ रात्रि", 5),
         ),
         2: (
             ("smile", 4), ("glad", 3), ("nice", 2), ("thanks", 2),
-            ("thank you", 2), ("😊", 4), ("🙂", 3),
+            ("thank you", 2), ("😊", 4), ("🙂", 3), ("namaste", 4),
+            ("hello", 4), ("good morning", 4), ("good evening", 4), ("welcome", 3),
         ),
         4: (
             ("wink", 6), ("😉", 5), ("hehe", 2), ("cheeky", 3),
@@ -145,18 +152,29 @@ class MikoEmotionEngine:
         "serious": 7,
     }
 
-    def __init__(
-        self,
-        image_dir: str | Path = "assets/miko/emotions",
-        cache_dir: str | Path = "data/miko_emotion_cache",
-    ) -> None:
+    MAX_BYTES = 8 * 1024 * 1024
+    MAX_PIXELS = 16_000_000
+    MIN_IMAGE_SCORE = 4
+    FLIRT_EMOTIONS = frozenset({4, 6, 14, 21, 22})
+    NEGATED = re.compile(r"\b(?:not|never|wasn't|weren't|didn't|don't|no longer)\s+(?:\w+\s+)?$")
+
+    def __init__(self, image_dir: str | Path = "assets/miko/emotions") -> None:
         self.image_dir = Path(image_dir)
-        self.cache_dir = Path(cache_dir)
+        self.patterns = {
+            emotion_id: tuple((re.compile(r"(?<!\w)" + re.escape(phrase) + r"(?!\w)"), weight)
+                              for phrase, weight in terms)
+            for emotion_id, terms in self.PATTERNS.items()
+        }
         self.zip_candidates = (
             Path("Yae Miko Discord reaction images.zip"),
             Path("data") / "Yae Miko Discord reaction images.zip",
             self.image_dir / "Yae Miko Discord reaction images.zip",
         )
+
+    @classmethod
+    def _has_signal(cls, pattern: re.Pattern[str], text: str) -> bool:
+        return any(not cls.NEGATED.search(text[max(0, match.start() - 40):match.start()])
+                   for match in pattern.finditer(text))
 
     def analyze(
         self,
@@ -167,15 +185,18 @@ class MikoEmotionEngine:
         intent: str = "chat",
         spice_level: int = 1,
     ) -> MikoEmotion:
-        user = str(user_text or "").casefold()
-        reply = str(reply_text or "").casefold()
-        combined = f"{user}\n{reply}"
+        user = str(user_text or "").casefold().replace("’", "'")
+        reply = str(reply_text or "").casefold().replace("’", "'")
         scores: dict[int, int] = {emotion_id: 0 for emotion_id in self.EMOTIONS}
 
-        for emotion_id, patterns in self.PATTERNS.items():
+        for emotion_id, patterns in self.patterns.items():
+            if spice_level == 0 and emotion_id in self.FLIRT_EMOTIONS:
+                continue
             for pattern, weight in patterns:
-                if pattern.casefold() in combined:
+                if self._has_signal(pattern, reply):
                     scores[emotion_id] += weight
+                elif self._has_signal(pattern, user):
+                    scores[emotion_id] += (weight + 1) // 2
 
         if intent == "goodbye":
             scores[24] += 8
@@ -193,8 +214,6 @@ class MikoEmotionEngine:
         elif mood == "happy":
             scores[3] += 4
             scores[2] += 2
-        elif mood == "playful":
-            scores[23] += 1
 
         if spice_level == 2 and scores[6] > 0:
             scores[6] += 1
@@ -207,85 +226,60 @@ class MikoEmotionEngine:
         else:
             reason = f"emotion score {best_score}"
 
-        return MikoEmotion(best_id, self.EMOTIONS[best_id], reason)
+        return MikoEmotion(best_id, self.EMOTIONS[best_id], reason, best_score)
 
-    def image_path(self, emotion_id: int) -> Path:
-        """Resolve the exact numbered emotion image, extracting the ZIP on demand."""
-        emotion_id = max(1, min(24, int(emotion_id)))
-
-        # Preferred runtime cache.
-        cached = self.cache_dir / f"{emotion_id:02d}.webp"
-        if cached.is_file():
-            return cached
-
-        # Already-installed assets in WEBP/PNG form.
-        for candidate in (
-            self.image_dir / f"{emotion_id:02d}.webp",
-            self.image_dir / f"{emotion_id}.webp",
-            self.image_dir / f"{emotion_id:02d}.png",
-            self.image_dir / f"{emotion_id}.png",
-        ):
-            if candidate.is_file():
-                return self._to_cached_webp(candidate, emotion_id) or candidate
-
-        # One-time WispByte-friendly ZIP import.
-        return self._extract_from_zip(emotion_id) or cached
-
-    def _to_cached_webp(self, source: Path, emotion_id: int) -> Path | None:
-        try:
-            from PIL import Image
-
-            self.cache_dir.mkdir(parents=True, exist_ok=True)
-            target = self.cache_dir / f"{emotion_id:02d}.webp"
-            with Image.open(source) as image:
-                image = image.convert("RGB")
-                image.thumbnail((512, 512), Image.Resampling.LANCZOS)
-                image.save(target, "WEBP", quality=88, method=6)
-            return target
-        except (OSError, ValueError, ImportError) as exc:
-            logger.warning(
-                "Could not convert Miko emotion %02d from %s: %s",
-                emotion_id,
-                source,
-                exc,
-            )
-            return None
-
-    def _extract_from_zip(self, emotion_id: int) -> Path | None:
-        zip_path = next((p for p in self.zip_candidates if p.is_file()), None)
-        if zip_path is None:
+    def public_image(self, emotion_id: int) -> bytes | None:
+        """Return a general-audience reaction tied to the exact reviewed source bytes."""
+        if emotion_id not in self.EMOTIONS:
             return None
 
         try:
-            with zipfile.ZipFile(zip_path) as archive:
-                selected: str | None = None
-                for member in archive.namelist():
-                    stem = Path(member).stem
-                    if stem.isdigit() and int(stem) == emotion_id:
-                        selected = member
-                        break
+            with (self.image_dir / "public.json").open("rb") as manifest:
+                contents = manifest.read(8193)
+            if len(contents) > 8192:
+                return None
+            approved = json.loads(contents)
+            digest = approved.get(f"{emotion_id:02d}") if isinstance(approved, dict) else None
+            if not isinstance(digest, str) or not re.fullmatch(r"[a-f0-9]{64}", digest):
+                return None
 
-                if selected is None:
+            raw = self._read_source(emotion_id)
+            if not raw or len(raw) > self.MAX_BYTES or hashlib.sha256(raw).hexdigest() != digest:
+                return None
+
+            with Image.open(io.BytesIO(raw), formats=("WEBP", "PNG")) as image:
+                if image.width * image.height > self.MAX_PIXELS or getattr(image, "is_animated", False):
                     return None
-
-                raw = archive.read(selected)
-                from PIL import Image
-
-                self.cache_dir.mkdir(parents=True, exist_ok=True)
-                target = self.cache_dir / f"{emotion_id:02d}.webp"
-                with Image.open(io.BytesIO(raw)) as image:
-                    image = image.convert("RGB")
-                    image.thumbnail((512, 512), Image.Resampling.LANCZOS)
-                    image.save(target, "WEBP", quality=88, method=6)
-
-                return target
-        except (OSError, ValueError, zipfile.BadZipFile, KeyError, ImportError) as exc:
-            logger.warning("Could not load Miko emotion ZIP %s: %s", zip_path, exc)
+                image = image.convert("RGBA" if "A" in image.getbands() or "transparency" in image.info else "RGB")
+                image.thumbnail((512, 512), Image.Resampling.LANCZOS)
+                output = io.BytesIO()
+                image.save(output, "WEBP", quality=88)
+                return output.getvalue()
+        except FileNotFoundError:
+            return None
+        except (OSError, ValueError, ImportError, RuntimeError, SyntaxError, zipfile.BadZipFile,
+                Image.DecompressionBombError) as exc:
+            logger.warning("Could not load Miko reaction %02d: %s", emotion_id, type(exc).__name__)
             return None
 
-    def available(self, emotion_id: int) -> bool:
-        return self.image_path(emotion_id).is_file()
+    def _read_source(self, emotion_id: int) -> bytes | None:
+        names = tuple(dict.fromkeys(f"{stem}.{ext}" for ext in ("webp", "png")
+                                    for stem in (f"{emotion_id:02d}", str(emotion_id))))
+        for name in names:
+            path = self.image_dir / name
+            if path.is_file():
+                with path.open("rb") as source:
+                    return source.read(self.MAX_BYTES + 1)
 
-    def describe(self, emotion_id: int) -> str:
-        emotion_id = max(1, min(24, int(emotion_id)))
-        return self.EMOTIONS[emotion_id]
+        archive_path = next((path for path in self.zip_candidates if path.is_file()), None)
+        if archive_path is None:
+            return None
+        with zipfile.ZipFile(archive_path) as archive:
+            matches = [member for member in archive.infolist()
+                       if not member.is_dir() and Path(member.filename).name.casefold() in names]
+            if matches:
+                member = min(matches, key=lambda item: (names.index(Path(item.filename).name.casefold()), item.filename))
+                if member.file_size <= self.MAX_BYTES:
+                    with archive.open(member) as source:
+                        return source.read(self.MAX_BYTES + 1)
+        return None

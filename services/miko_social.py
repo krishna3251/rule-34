@@ -44,6 +44,7 @@ class MikoSocialEngine:
             "search": 0.60,
             "action": 0.58,
             "serious": 0.50,
+            "clarify": 0.50,
             "goodbye": 0.76,
         }.get(intent, 0.84)
 
@@ -84,7 +85,7 @@ class MikoSocialEngine:
             "be warm and conversational without sounding scripted",
             "keep the reply crisp but add personality",
         )
-        grounded = strict or mood in {"serious", "concerned"} or intent in {"help", "coding", "search", "action", "serious"}
+        grounded = strict or mood in {"serious", "concerned"} or intent in {"help", "coding", "search", "action", "serious", "clarify"}
         teasing_allowed = spice_level > 0 and not grounded
         if grounded:
             style_cycle = ("answer directly with calm warmth", "be clear, grounded and considerate")
