@@ -9,6 +9,7 @@ from typing import Any
 
 from services.miko_ai import MikoAI, allow_external, prefer_local, provider_usage
 from collections import Counter
+from collections.abc import Callable
 from services.brain.config import BrainConfig
 from services.brain.runtime import BrainRuntime, worker
 from services.brain.skills import LocalSkills
@@ -39,6 +40,8 @@ class MikoResult:
     response_mode: str = "chat"
     priority: str = "normal"
     web_search_used: bool = False
+    completed: bool = False
+    attach_emotion: bool = False
 
 
 class MikoChatEngine:
@@ -127,7 +130,7 @@ class MikoChatEngine:
         strict: bool = False,
         allow_web: bool = True,
         temperature: float | None = None,
-    ) -> tuple[str, bool]:
+    ) -> tuple[str, bool, bool]:
         working = list(messages)
         used_web = False
         total_tool_calls = 0
@@ -137,7 +140,7 @@ class MikoChatEngine:
 
         for _ in range(self.max_tool_iterations):
             if sum(len(json.dumps(m, ensure_ascii=False)) for m in working) > self.config.context_chars:
-                return "This task exceeded the context limit. Please split it into smaller requests.", used_web
+                return "This task exceeded the context limit. Please split it into smaller requests.", used_web, False
             ai_result = await self.ai.generate_agent(
                 working,
                 tool_schemas=tool_schemas,
@@ -148,7 +151,7 @@ class MikoChatEngine:
             used_web = used_web or ai_result.web_search_used
 
             if not ai_result.tool_calls:
-                return ai_result.text.strip(), used_web
+                return ai_result.text.strip(), used_web, ai_result.provider != "none"
 
             if total_tool_calls + len(ai_result.tool_calls) > self.max_tool_calls:
                 logger.warning(
@@ -158,6 +161,7 @@ class MikoChatEngine:
                 return (
                     "I stopped the automation before it could run too many actions.",
                     used_web,
+                    False,
                 )
 
             working.append(ai_result.assistant_message)
@@ -190,6 +194,7 @@ class MikoChatEngine:
         return (
             "I stopped after reaching the automation limit for this request.",
             used_web,
+            False,
         )
 
     @staticmethod
@@ -258,7 +263,7 @@ class MikoChatEngine:
 
         await self.gate.acquire_ai_slot()
         try:
-            reply, used_web = await self._agent_generate(
+            reply, used_web, completed = await self._agent_generate(
                 messages,
                 bot=bot,
                 message=message,
@@ -270,13 +275,16 @@ class MikoChatEngine:
         finally:
             self.gate.release_ai_slot()
 
-        if not reply:
-            reply = "I lost my train of thought. Try that again?"
+        if not completed:
+            return MikoResult(True, reply, reason="generation_incomplete")
 
         if profile.get('catalog_allowed') and not await content_access(bot, message.guild, message.channel, message.author):
             return MikoResult(True, 'Your access changed while I was answering. Use a verified, age-restricted channel for catalog or channel-knowledge requests.', reason='access_revoked')
         current_profile = await self.conversation_profile(message, bot)
-        if decision.spice_level > 0 and self._profile_level(current_profile) == 0:
+        cap = self._profile_level(current_profile)
+        if getattr(self, "miko_chat", None) is not None:
+            cap = min(cap, self.miko_chat._channel_level(message.channel))
+        if decision.spice_level > cap:
             # An opt-out or access revocation during generation wins over that
             # in-flight turn. Regenerate with the existing clean retry path.
             decision.spice_level = 0
@@ -290,6 +298,7 @@ class MikoChatEngine:
             )
 
         if not valid:
+            decision.spice_level = 0
             retry_messages = await worker(self.context.build,
                 prompt=decision.prompt,
                 history=history,
@@ -308,7 +317,7 @@ class MikoChatEngine:
             )
             await self.gate.acquire_ai_slot()
             try:
-                retry, _ = await self._agent_generate(
+                retry, _, retry_completed = await self._agent_generate(
                     retry_messages,
                     bot=bot,
                     message=message,
@@ -320,6 +329,10 @@ class MikoChatEngine:
             finally:
                 self.gate.release_ai_slot()
 
+            if not retry_completed:
+                return MikoResult(True, retry, reason="generation_incomplete")
+            if profile.get("catalog_allowed") and not await content_access(bot, message.guild, message.channel, message.author):
+                return MikoResult(True, "Your access changed while I was answering. Please try again.", reason="access_revoked")
             retry_valid, retry_cleaned, retry_reason = self.response.validate(
                 self._scope(message),
                 retry,
@@ -334,7 +347,7 @@ class MikoChatEngine:
                     validation_reason,
                     retry_reason,
                 )
-                cleaned = self.response.fallback(retry_reason)
+                return MikoResult(True, self.response.fallback(retry_reason), reason="validation_fallback")
 
         await self._record(message, decision.prompt, cleaned, display_name)
 
@@ -356,6 +369,10 @@ class MikoChatEngine:
             response_mode=decision.response_mode,
             priority=decision.priority,
             web_search_used=used_web,
+            completed=True,
+            attach_emotion=(valid and not decision.strict and decision.intent in {"chat", "gaming", "goodbye"}
+                            and decision.mood not in {"serious", "concerned"}
+                            and emotion.score >= MikoEmotionEngine.MIN_IMAGE_SCORE),
         )
 
     async def conversation_profile(self, message: Any, bot: Any) -> dict[str, Any]:
@@ -386,15 +403,20 @@ class MikoChatEngine:
         )
         return gate, profile
 
-    async def handle(self, message: Any, bot: Any, *, auto_chat=False, admin_level=1, disabled=False, quiet=False) -> MikoResult:
+    async def handle(self, message: Any, bot: Any, *, auto_chat=False, admin_level=1,
+                     disabled=False, quiet=False, on_wait: Callable[[], None] | None = None) -> MikoResult:
         return await self._entry(lambda: self._handle(message, bot, auto_chat=auto_chat,
-            admin_level=admin_level, disabled=disabled, quiet=quiet), message, getattr(message, 'id', None))
+            admin_level=admin_level, disabled=disabled, quiet=quiet, on_wait=on_wait),
+            message, getattr(message, 'id', None))
 
-    async def ask_direct(self, message: Any, bot: Any, *, prompt: str, admin_level=1) -> MikoResult:
+    async def ask_direct(self, message: Any, bot: Any, *, prompt: str, admin_level=1,
+                         disabled=False, on_wait: Callable[[], None] | None = None) -> MikoResult:
+        if disabled:
+            return MikoResult(False, reason="channel_disabled")
         if len(prompt) > 4000:
             return MikoResult(True, 'Please keep each request within 4,000 characters.', reason='too_large')
         return await self._entry(lambda: self._ask_direct(message, bot, prompt=prompt,
-            admin_level=admin_level), message, getattr(message, 'id', None))
+            admin_level=admin_level, on_wait=on_wait), message, getattr(message, 'id', None))
 
     async def _handle(
         self,
@@ -405,6 +427,7 @@ class MikoChatEngine:
         admin_level: int = 1,
         disabled: bool = False,
         quiet: bool = False,
+        on_wait: Callable[[], None] | None = None,
     ) -> MikoResult:
         """Process a Discord conversation event through the complete engine."""
 
@@ -427,7 +450,7 @@ class MikoChatEngine:
         if not gate.respond:
             return MikoResult(False, reason=gate.reason)
 
-        return await self._process_gate(message, bot, gate, profile, auto_chat=auto_chat)
+        return await self._process_gate(message, bot, gate, profile, auto_chat=auto_chat, on_wait=on_wait)
 
     async def _ask_direct(
         self,
@@ -436,6 +459,7 @@ class MikoChatEngine:
         *,
         prompt: str,
         admin_level: int = 1,
+        on_wait: Callable[[], None] | None = None,
     ) -> MikoResult:
         """Run a direct question through the same chat engine.
 
@@ -453,9 +477,9 @@ class MikoChatEngine:
         if not gate.respond:
             return MikoResult(False, reason=gate.reason)
 
-        return await self._process_gate(message, bot, gate, profile)
+        return await self._process_gate(message, bot, gate, profile, on_wait=on_wait)
 
-    async def _process_gate(self, message, bot, gate, profile, *, auto_chat=False):
+    async def _process_gate(self, message, bot, gate, profile, *, auto_chat=False, on_wait=None):
         if self._is_forget_request(gate.prompt):
             await self.clear_user(message.author.id)
             return MikoResult(True, 'Your stored Miko memory and profile have been deleted.', reason='forget_request')
@@ -500,6 +524,8 @@ class MikoChatEngine:
         token = allow_external.set(bool(prefs['external']))
         local_token = prefer_local.set(not prefs['external'] or not self.config.external_enabled or (not decision.allow_actions and len(decision.prompt) <= 1000 and decision.intent not in {'coding', 'action'}))
         try:
+            if on_wait is not None and decision.reason in {"direct", "summoned"}:
+                on_wait()
             return await self._generate_and_finalize(
                 message=message, bot=bot, decision=decision, history=history, profile=profile,
                 display_name=getattr(message.author, 'display_name', None) or getattr(message.author, 'name', 'User'),

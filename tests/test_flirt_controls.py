@@ -132,9 +132,9 @@ class FlirtControlTests(unittest.IsolatedAsyncioTestCase):
             calls += 1
             if calls == 1:
                 self.engine.profile.disable_flirting(1)
-                return 'Smooth, darling.', False
+                return 'Smooth, darling.', False, True
             self.assertTrue(kwargs['strict'])
-            return 'Okay. Keeping things friendly.', False
+            return 'Okay. Keeping things friendly.', False, True
 
         self.engine._agent_generate = generate
         decision = MikoDecision(True, prompt='hello', spice_level=2)

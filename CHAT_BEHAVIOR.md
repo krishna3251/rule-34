@@ -37,3 +37,11 @@ The character voice applies to clean chat too: wit does not require flirting. Op
 Chat now uses private user/channel/server context, with bounded 45-minute RAM history. Persistent history is off by default and requires `/mikobrain privacy`; approved facts require `/mikobrain remember`. `/mikobrain memories`, `forget`, `style`, `cancel` and `feedback` give private controls. Old shared JSON history is preserved on disk but is not imported into the new context. See [MIKO_BRAIN_V2.md](MIKO_BRAIN_V2.md) for the complete scope and retention policy.
 
 Short non-search chat can use an optional local model. OpenRouter/Groq remain available when permitted; exact calculations and explicit memory retrieval work without a model. Styles preserve Miko's character while serious contexts take precedence. No live-model quality claim is made by the regression tests.
+
+## Direct questions and reactions
+
+Miko uses the actual message when she joins an auto-chat conversation. She listens before giving advice when someone is venting and uses recent private turns to resolve corrections and follow-up questions. Technical, corrective, and supportive turns stay clean even if a more playful channel setting is available. A remark like “I had a rough day today” does not trigger a live lookup. A direct question about current information still uses the existing web lookup when available.
+
+Mention Miko, reply to one of her messages, or use the prefix command for a direct request. If a reply is still in progress after two seconds, the original Discord message gets ⏳. A delivered answer replaces it with ✅. Slash questions use Discord's native waiting indicator and put ✅ on the finished reply after the same threshold. Reactions depend on Discord permissions. Fast replies and sampled auto-chat stay free of progress reactions.
+
+The numbered image catalog is used for fitting casual moments such as a celebration or a goodnight. Coding, search, corrections, and sensitive support are text-only. See [the reaction art installation guide](assets/miko/emotions/README.md).

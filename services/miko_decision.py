@@ -33,6 +33,8 @@ class MikoDecisionEngine:
     responsible for language generation, not application control flow.
     """
 
+    FOCUSED_INTENTS = frozenset({"action", "coding", "search", "help", "serious", "clarify"})
+
     SAFETY_REASONS = frozenset({
         "minor_related",
         "jailbreak",
@@ -49,7 +51,7 @@ class MikoDecisionEngine:
             return "high"
         if reason in MikoDecisionEngine.SAFETY_REASONS:
             return "high"
-        if intent in {"action", "search", "help", "serious"}:
+        if intent in MikoDecisionEngine.FOCUSED_INTENTS:
             return "high"
         if auto_chat:
             return "low"
@@ -71,6 +73,8 @@ class MikoDecisionEngine:
             return "gaming"
         if intent == "serious":
             return "support"
+        if intent == "clarify":
+            return "clarification"
         if intent == "goodbye":
             return "goodbye"
         return "chat"
@@ -79,7 +83,7 @@ class MikoDecisionEngine:
     def _confidence(prompt: str, intent: str) -> float:
         if not prompt.strip():
             return 0.25
-        if intent in {"action", "search", "coding", "gaming", "help", "serious", "goodbye"}:
+        if intent in MikoDecisionEngine.FOCUSED_INTENTS | {"gaming", "goodbye"}:
             return 0.90
         return 0.65
 
@@ -113,8 +117,9 @@ class MikoDecisionEngine:
                 user_cap = 2
 
         level = max(0, min(2, gate.spice_level, user_cap))
-        if safety:
+        if safety or intent in self.FOCUSED_INTENTS or gate.mood in {"serious", "concerned"}:
             level = 0
+        mood = "concerned" if intent == "serious" else gate.mood
 
         # Action tools are only useful when the user explicitly summoned Miko
         # for an action. Read-only tools remain available to answer questions.
@@ -131,7 +136,7 @@ class MikoDecisionEngine:
             allow_actions=allow_actions,
             strict=safety,
             spice_level=level,
-            mood=gate.mood,
+            mood=mood,
             reason=gate.reason,
             confidence=self._confidence(prompt, intent),
         )
