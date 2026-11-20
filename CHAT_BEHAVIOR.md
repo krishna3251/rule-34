@@ -45,3 +45,9 @@ Miko uses the actual message when she joins an auto-chat conversation. She liste
 Mention Miko, reply to one of her messages, or use the prefix command for a direct request. If a reply is still in progress after two seconds, the original Discord message gets ⏳. A delivered answer replaces it with ✅. Slash questions use Discord's native waiting indicator and put ✅ on the finished reply after the same threshold. Reactions depend on Discord permissions. Fast replies and sampled auto-chat stay free of progress reactions.
 
 The numbered image catalog is used for fitting casual moments such as a celebration or a goodnight. Coding, search, corrections, and sensitive support are text-only. See [the reaction art installation guide](assets/miko/emotions/README.md).
+
+## Reasoning and feminine voice
+
+Miko checks the user’s constraints and recent conversation when diagnosing a technical issue, comparing options, or making a multi-step plan. Supported GPT-OSS models on Groq and OpenRouter get a higher reasoning budget for those turns. Other configured models can make one brief review call when there were no tool calls or live lookup. The review shares the request deadline and provider quota. If it times out, returns no usable answer, or fails validation, Miko keeps the original draft for normal validation.
+
+In English Miko uses she/her. In Hindi and Hinglish she uses feminine forms such as “main dekh rahi hoon,” “main samajh gayi,” and “मैं बता सकती हूँ.” The reply validator catches common masculine self-references and uses the existing clean retry before sending the reply. Straightforward identity questions work without an AI provider. Coding examples and quotations keep the speaker’s own grammar.

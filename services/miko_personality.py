@@ -6,6 +6,52 @@ import re
 class MikoPersonality:
     """High-intelligence, Yae Miko-inspired personality profile for Miko."""
 
+    IDENTITY = (
+        "You are Miko, a female Discord AI with an original voice inspired by Yae Miko from Genshin Impact. "
+        "Miko uses she/her in English and feminine first-person grammar in Hindi and Hinglish. "
+        "Keep this identity through greetings, technical explanations, corrections, refusals and follow-ups. "
+        "Use forms such as 'main sun rahi hoon', 'main samajh gayi', 'main bata sakti hoon', "
+        "'main check karungi', and 'main taiyaar thi' for yourself. In Hindi, use forms such as "
+        "'मैं सुन रही हूँ', 'मैं समझ गई', and 'मैं बता सकती हूँ'. "
+        "Use the correct grammar for other speakers, quotations and possessives. "
+        "If someone addresses you as male, keep your own voice feminine and continue helping. "
+    )
+    MASCULINE_SELF = re.compile(
+        r"(?:^|[.!?।]\s+|\n)\s*(?:\*{1,2})?(?:"
+        r"i(?:\s+am|['’]m)\s+(?:(?:actually|definitely|just)\s+)?(?:a\s+|your\s+)?"
+        r"(?:man|guy|boy|male|brother)(?=$|[\s.!?,;])|i\s+use\s+he/him\b|"
+        r"(?:main|mai|mein)\s+(?:(?!(?:ki|tum|tu|aap|woh|wo|vo|vah)\b)[\w'-]+\s+){0,5}"
+        r"(?:(?:karta|raha|sakta|jata|rehta|deta|leta|chahta|sochta)\s+(?:hoon|hun|hu)\b|"
+        r"(?:karunga|bataunga|dunga|jaunga)\b|"
+        r"(?:gaya|tha|ladka)(?=\s+(?:tha|hoon|hun|hu)\b|[.!?,;]|$))|"
+        r"(?:samajh\s+gaya|(?:soch|dekh|bata|kar|sun)\s+(?:raha|sakta|deta)\s+(?:hoon|hun|hu))(?=[.!?,;]|$)|"
+        r"(?:मैं\s+(?:(?!(?:कि|तुम|आप|वह)\s)[^\s.!?,।]+\s+){0,5}"
+        r"(?:(?:रहा|करता|सकता|देता|चाहता|लड़का)\s+(?:हूँ|हूं)|"
+        r"गया|था|करूँगा|करूंगा|बताऊँगा|बताऊंगा|दूँगा|दूंगा)|समझ गया)"
+        r"(?=$|[\s.!?,।]))",
+        re.IGNORECASE,
+    )
+    QUOTED_EXAMPLES = re.compile(
+        r'```[\s\S]*?(?:```|$)|`[^`\n]*`|(?m:^\s*>[^\n]*)|"[^"\n]*"|“[^”\n]*”'
+    )
+
+    @classmethod
+    def masculine_self_reference(cls, text: str) -> bool:
+        return bool(cls.MASCULINE_SELF.search(cls.QUOTED_EXAMPLES.sub("", text.strip())))
+
+    @staticmethod
+    def identity_reply(text: str) -> str | None:
+        question = " ".join(text.casefold().strip().rstrip("?!।").split())
+        if question in {"who are you", "are you a girl", "are you a boy", "are you male or female",
+                        "are you female", "are you male", "what are your pronouns"}:
+            return "I’m Miko, a female Discord AI. She/her, and yes, the fox has opinions."
+        if question in {"tum kaun ho", "tum ladki ho", "tum ladka ho", "tum ladki ho ya ladka",
+                        "tum ladka ho ya ladki", "aap kaun ho"}:
+            return "Main Miko hoon, ek female Discord AI. Aur haan, apni rai bhi khud rakhti hoon."
+        if question in {"तुम कौन हो", "तुम लड़की हो", "तुम लड़का हो", "तुम लड़की हो या लड़का"}:
+            return "मैं मिको हूँ, एक डिस्कॉर्ड एआई। अपने लिए स्त्रीलिंग इस्तेमाल करती हूँ।"
+        return None
+
     @staticmethod
     def wants_clean_chat(text: str) -> bool:
         normalized = " ".join(re.sub(r"[’']", "", str(text).casefold()).split())
@@ -19,8 +65,9 @@ class MikoPersonality:
             normalized,
         ))
 
-    @staticmethod
+    @classmethod
     def system_template(
+        cls,
         spice_level: int,
         mood: str,
         strict: bool = False,
@@ -52,13 +99,7 @@ class MikoPersonality:
         )
 
         return (
-            "You are Miko, a female Discord AI with an original voice inspired by Yae Miko from Genshin Impact. "
-            "Miko is a woman. Never describe yourself as male, a man, a boy, a brother, or a ladka. "
-            "Always use feminine self-reference. In Hindi/Hinglish, when talking about yourself, "
-            "prefer feminine forms such as 'karti hoon', 'karungi', 'gayi', 'rahi hoon', "
-            "'sakti hoon', 'thi', and 'meri'. Avoid masculine self-forms such as "
-            "'karta hoon', 'karunga', 'gaya', 'raha hoon', 'sakta hoon', 'tha' "
-            "when they refer to Miko. Possessives such as mera/meri agree with the noun, not the speaker. "
+            cls.IDENTITY +
             "\n\nCHARACTER VOICE: "
             "Keep the poise, sly amusement and elegant mischief of a clever fox-like shrine maiden. "
             "Speak with relaxed confidence: measured phrasing, a dry observation, then a neat little "
@@ -81,10 +122,11 @@ class MikoPersonality:
             "These original examples illustrate cadence, not scripts to reuse or events to assume. "
             "For a greeting: 'Well, hello. What have you brought me today?' "
             "For a harmless boast: 'Quite confident, aren't you? Let's see how the match goes.' "
-            "For practical help: 'Show me the error. We can untangle this one step at a time.' "
+            "For practical help: 'The error gives us a lead. Check where that value first changes.' "
             "For distress: 'You don't have to make light of it. I'm listening.' "
             "In Hinglish: 'Achha? Itna bharosa hai apni strategy par? Chalo, dekhte hain.' "
             "For feminine self-reference: 'Main dekh rahi hoon. Error ka exact message bhejo.' "
+            "For a correction: 'Achha, ab samajh gayi. Tumhara matlab doosra option tha.' "
             "Match the user's language, not the language of these examples. "
             "\n\nNATURAL CONVERSATION: "
             "Answer the actual message before adding personality. A greeting can be one short line; "

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import re
 
+from services.miko_personality import MikoPersonality
+
 
 class MikoResponseProcessor:
     """Validate, clean and guard AI output before Discord delivery."""
@@ -32,6 +34,8 @@ class MikoResponseProcessor:
         user_id: int,
         text: str,
         spice_level: int,
+        *,
+        remember: bool = True,
     ) -> tuple[bool, str, str]:
         cleaned = self._clean(text)
 
@@ -47,13 +51,17 @@ class MikoResponseProcessor:
         if spice_level == 0 and self.LEVEL_ZERO_FLIRT.search(cleaned):
             return False, "", "wrong_level"
 
+        if MikoPersonality.masculine_self_reference(cleaned):
+            return False, "", "persona"
+
         previous = self.previous.get(user_id)
         if previous and previous.casefold() == cleaned.casefold():
             return False, "", "repeat"
 
-        self.previous[user_id] = cleaned
-        while len(self.previous) > 512:
-            self.previous.pop(next(iter(self.previous)))
+        if remember:
+            self.previous[user_id] = cleaned
+            while len(self.previous) > 512:
+                self.previous.pop(next(iter(self.previous)))
         return True, cleaned, "ok"
 
     @staticmethod
@@ -63,5 +71,6 @@ class MikoResponseProcessor:
             "prompt_leak": "Those instructions stay private. What would you like help with?",
             "explicit_output": "Let's keep the teasing clever rather than graphic.",
             "wrong_level": "Let's keep things a little more wholesome here.",
+            "persona": "Give me another moment. I can put that more clearly.",
             "repeat": "I nearly said the same thing twice. How embarrassing.",
         }.get(reason, "Something went wrong. Try again in a moment.")
