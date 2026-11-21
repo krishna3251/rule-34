@@ -1,7 +1,11 @@
 """Admission, deduplication and cancellation, with no unbounded waiting queue."""
 import asyncio
 from collections import Counter, OrderedDict, deque
+from contextvars import ContextVar
 from time import monotonic
+
+
+request_deadline: ContextVar[float | None] = ContextVar("miko_request_deadline", default=None)
 
 
 class BrainRuntime:
@@ -37,8 +41,12 @@ class BrainRuntime:
         self.active[key] = task
         self.metrics['requests'] += 1
         try:
-            async with asyncio.timeout(self.config.timeout):
-                result = await operation()
+            async with asyncio.timeout(self.config.timeout) as deadline:
+                token = request_deadline.set(deadline.when())
+                try:
+                    result = await operation()
+                finally:
+                    request_deadline.reset(token)
             self.metrics['completed'] += 1
             return result
         except TimeoutError:

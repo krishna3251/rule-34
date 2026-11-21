@@ -7,12 +7,15 @@ import os
 import math
 import inspect
 import time
+import re
 from collections import Counter, deque
 from contextvars import ContextVar
 from datetime import datetime, timezone
 
 from services.brain.config import BrainConfig
 from services.brain.local import LocalModel
+from services.brain.runtime import request_deadline
+from services.miko_personality import MikoPersonality
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -45,6 +48,10 @@ class MikoAI:
     """OpenRouter-primary conversational AI with Groq fallback."""
 
     OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+    GPT_OSS_MODELS = frozenset({"openai/gpt-oss-20b", "openai/gpt-oss-120b"})
+    LEADING_REASONING = re.compile(
+        r"\A(?:\s*<(think|analysis)>.*?(?:</\1>|\Z))+", re.IGNORECASE | re.DOTALL
+    )
 
     def __init__(self, config: BrainConfig | None = None) -> None:
         self.config = config or BrainConfig.from_env()
@@ -125,7 +132,7 @@ class MikoAI:
             strict=strict,
             temperature=temperature,
         )
-        return result.text or "Ara ara~ Main ek pal ke liye soch mein kho gayi thi."
+        return result.text or "Give me another moment. I can put that more clearly."
 
     async def generate_agent(
         self,
@@ -135,6 +142,7 @@ class MikoAI:
         allow_web: bool = True,
         strict: bool = False,
         temperature: float | None = None,
+        deliberate: bool = False,
     ) -> MikoAIResponse:
         if sum(len(json.dumps(m, ensure_ascii=False)) for m in messages) > self.config.context_chars:
             raise ValueError('Model context exceeds configured limit')
@@ -172,7 +180,8 @@ class MikoAI:
                     started = time.monotonic()
                     try:
                         result = await method(messages, tool_schemas=tool_schemas,
-                                              allow_web=allow_web, strict=strict, temperature=temp)
+                                              allow_web=allow_web, strict=strict, temperature=temp,
+                                              deliberate=deliberate)
                         self.timings.append((provider, (time.monotonic()-started)*1000))
                         return result
                     except Exception as exc:
@@ -185,6 +194,60 @@ class MikoAI:
                             break  # Switch provider instead of ignoring a long Retry-After.
                         await asyncio.sleep(delay)
         return self._unavailable()
+
+    @classmethod
+    def _uses_native_reasoning(cls, provider: str, model: str) -> bool:
+        return provider in {"openrouter", "groq"} and model.split(":", 1)[0] in cls.GPT_OSS_MODELS
+
+    @staticmethod
+    def _reasoning_effort(deliberate: bool) -> str:
+        preferred = os.getenv("MIKO_REASONING_EFFORT", "low").strip().casefold()
+        if preferred not in {"low", "medium", "high"}:
+            preferred = "low"
+        return "medium" if deliberate and preferred == "low" else preferred
+
+    async def review_answer(self, messages: list[dict[str, Any]], draft: MikoAIResponse) -> str | None:
+        """Attempt one brief review on the provider that produced the draft."""
+        if self._uses_native_reasoning(draft.provider, draft.model):
+            return None
+        runtime_deadline = request_deadline.get()
+        review_timeout = 4.0
+        if runtime_deadline is not None:
+            review_timeout = min(review_timeout, runtime_deadline - asyncio.get_running_loop().time() - 0.5)
+        if review_timeout < 0.75:
+            return None
+
+        review_messages = [*messages, {"role": "assistant", "content": draft.text}, {
+            "role": "user",
+            "content": (
+                "Review the draft against my original request and the conversation. "
+                "Correct any clear mistake or important omission. Keep the draft if it is sound. "
+                "Use my language and Miko's voice. Return only the finished reply."
+            ),
+        }]
+        if sum(len(json.dumps(m, ensure_ascii=False)) for m in review_messages) > self.config.context_chars:
+            return None
+
+        provider = draft.provider
+        try:
+            async with asyncio.timeout(review_timeout):
+                if provider == "local" and self.local:
+                    self._count_operation("local")
+                    body = await self.local.generate(review_messages, 0.45)
+                    result = self._parse_provider_response(body, provider="local", model=self.config.local_model)
+                elif self.config.external_enabled and allow_external.get():
+                    adapter = {"openrouter": self._openrouter_generate, "groq": self._groq_generate}.get(provider)
+                    if adapter is None or not self._reserve_budget():
+                        return None
+                    self._count_operation(provider)
+                    result = await adapter(review_messages, tool_schemas=[], allow_web=False,
+                                           strict=False, temperature=0.45)
+                else:
+                    return None
+        except Exception as exc:
+            logger.debug("Miko answer review unavailable: %s", type(exc).__name__)
+            return None
+        return result.text if not result.tool_calls else None
 
     def _reserve_budget(self):
         day = datetime.now(timezone.utc).date().isoformat()
@@ -223,7 +286,7 @@ class MikoAI:
             "role": "system",
             "content": (
                 "STRICT OUTPUT MODE: Keep the reply clean, concise, non-graphic and in character. "
-                "Miko is female and uses feminine self-reference in Hindi/Hinglish."
+                + MikoPersonality.IDENTITY
             ),
         }
 
@@ -235,6 +298,7 @@ class MikoAI:
         allow_web: bool,
         strict: bool,
         temperature: float,
+        deliberate: bool = False,
     ) -> MikoAIResponse:
         request_messages = list(messages)
         if strict:
@@ -257,8 +321,10 @@ class MikoAI:
             "model": self.openrouter_model,
             "messages": request_messages,
             "temperature": temperature,
-            "max_completion_tokens": 450,
+            "max_completion_tokens": 2048 if deliberate else 450,
         }
+        if self._uses_native_reasoning("openrouter", self.openrouter_model):
+            payload["reasoning"] = {"effort": self._reasoning_effort(deliberate), "exclude": True}
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
@@ -303,6 +369,7 @@ class MikoAI:
         allow_web: bool,
         strict: bool,
         temperature: float,
+        deliberate: bool = False,
     ) -> MikoAIResponse:
         request_messages = list(messages)
         if strict:
@@ -320,10 +387,11 @@ class MikoAI:
             "model": self.groq_model,
             "messages": request_messages,
             "temperature": temperature,
-            "max_completion_tokens": 450,
-            "reasoning_effort": os.getenv("MIKO_REASONING_EFFORT", "low"),
-            "include_reasoning": False,
+            "max_completion_tokens": 2048 if deliberate else 450,
         }
+        if self._uses_native_reasoning("groq", self.groq_model):
+            kwargs["reasoning_effort"] = self._reasoning_effort(deliberate)
+            kwargs["include_reasoning"] = False
         if tools:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
@@ -403,13 +471,15 @@ class MikoAI:
                 },
             })
 
+        if content is not None and not isinstance(content, str):
+            raise ValueError("Provider content must be text")
+        if content:
+            content = MikoAI.LEADING_REASONING.sub("", content).strip()[:1800]
         assistant_message = {"role": "assistant", "content": content}
         if normalized_raw_calls:
             assistant_message["tool_calls"] = normalized_raw_calls
 
-        if content is not None and not isinstance(content, str):
-            raise ValueError("Provider content must be text")
-        text = str(content or "").strip()[:1800]
+        text = content or ""
         if not text and not tool_calls:
             raise RuntimeError(f"{provider} returned an empty response")
 
