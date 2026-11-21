@@ -29,7 +29,11 @@ Miko uses a fixed numeric reaction table. The ID is canonical and maps directly 
 | 23 | Smug |
 | 24 | Sleepy |
 
-## Install the Yae Miko pack
+## Included stickers
+
+The default pack has three official Yae Miko stickers from [Genshin Impact Official on HoYoLAB](https://www.hoyolab.com/article/3386667), where reposting is allowed. `02.webp` is Copy Editing (Smile), `10.webp` is Praying (Surprised), and `23.webp` is Smirk (Smug). A mood without an approved image gets a text reply.
+
+## Install a larger Yae Miko pack
 
 1. Put `Yae Miko Discord reaction images.zip` beside `main.py` on the bot host. The startup directory, either directory's `data/` folder, and this folder are also searched. Name each static WebP or PNG inside the ZIP using its two-digit ID, such as `02.webp` for Smile or `24.png` for Sleepy.
 2. Review the images and put `Yae Miko Discord reaction images.public.json` next to the ZIP. Use the two-digit IDs as JSON keys and the lowercase SHA-256 hashes of the approved image bytes as values. This pair takes priority over the older loose-file setup. Hash the files inside the ZIP, since the bot checks the bytes of each image.
