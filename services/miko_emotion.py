@@ -59,6 +59,7 @@ class MikoEmotionEngine:
             ("congrats", 4), ("congratulations", 4), ("won", 3),
             ("passed", 3), ("yay", 3), ("happy", 3), ("great news", 4),
             ("success", 3), ("jeet gaya", 5), ("jeet gayi", 5), ("jeet gaye", 5),
+            ("got the job", 7),
         ),
         5: (
             ("haha", 4), ("lmao", 4), ("lol", 3), ("funny", 2),
@@ -157,19 +158,20 @@ class MikoEmotionEngine:
     MIN_IMAGE_SCORE = 4
     FLIRT_EMOTIONS = frozenset({4, 6, 14, 21, 22})
     NEGATED = re.compile(r"\b(?:not|never|wasn't|weren't|didn't|don't|no longer)\s+(?:\w+\s+)?$")
+    GREETING = re.compile(r"(?:hi|hey|hello|namaste|good morning|good evening)(?:[ ,]+(?:yae )?miko)?[!.]*")
+    ARCHIVE_NAME = "Yae Miko Discord reaction images.zip"
 
-    def __init__(self, image_dir: str | Path = "assets/miko/emotions") -> None:
-        self.image_dir = Path(image_dir)
+    def __init__(self, image_dir: str | Path | None = None) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        working_dir = Path.cwd()
+        self.image_dir = Path(image_dir) if image_dir is not None else project_root / "assets/miko/emotions"
         self.patterns = {
             emotion_id: tuple((re.compile(r"(?<!\w)" + re.escape(phrase) + r"(?!\w)"), weight)
                               for phrase, weight in terms)
             for emotion_id, terms in self.PATTERNS.items()
         }
-        self.zip_candidates = (
-            Path("Yae Miko Discord reaction images.zip"),
-            Path("data") / "Yae Miko Discord reaction images.zip",
-            self.image_dir / "Yae Miko Discord reaction images.zip",
-        )
+        archive_dirs = (working_dir, project_root, working_dir / "data", project_root / "data", self.image_dir)
+        self.zip_candidates = tuple(directory / self.ARCHIVE_NAME for directory in dict.fromkeys(archive_dirs))
 
     @classmethod
     def _has_signal(cls, pattern: re.Pattern[str], text: str) -> bool:
@@ -208,6 +210,8 @@ class MikoEmotionEngine:
             scores[8] += 2
         elif intent == "gaming":
             scores[3] += 1
+        elif intent == "chat" and self.GREETING.fullmatch(user.strip()):
+            scores[2] += self.MIN_IMAGE_SCORE
 
         if mood in self.SERIOUS_MOOD_DEFAULTS:
             scores[self.SERIOUS_MOOD_DEFAULTS[mood]] += 4
@@ -234,16 +238,16 @@ class MikoEmotionEngine:
             return None
 
         try:
-            with (self.image_dir / "public.json").open("rb") as manifest:
-                contents = manifest.read(8193)
-            if len(contents) > 8192:
-                return None
-            approved = json.loads(contents)
-            digest = approved.get(f"{emotion_id:02d}") if isinstance(approved, dict) else None
-            if not isinstance(digest, str) or not re.fullmatch(r"[a-f0-9]{64}", digest):
+            archives = [path for path in self.zip_candidates if path.is_file()]
+            approved_archive = next((path for path in archives if path.with_suffix(".public.json").is_file()), None)
+            archive_path = approved_archive or next(iter(archives), None)
+            manifest_path = (approved_archive.with_suffix(".public.json")
+                             if approved_archive else self.image_dir / "public.json")
+            digest = self._approved_digest(manifest_path, emotion_id)
+            if digest is None:
                 return None
 
-            raw = self._read_source(emotion_id)
+            raw = self._read_source(emotion_id, archive_path, archive_only=approved_archive is not None)
             if not raw or len(raw) > self.MAX_BYTES or hashlib.sha256(raw).hexdigest() != digest:
                 return None
 
@@ -262,16 +266,26 @@ class MikoEmotionEngine:
             logger.warning("Could not load Miko reaction %02d: %s", emotion_id, type(exc).__name__)
             return None
 
-    def _read_source(self, emotion_id: int) -> bytes | None:
+    @staticmethod
+    def _approved_digest(path: Path, emotion_id: int) -> str | None:
+        with path.open("rb") as manifest:
+            contents = manifest.read(8193)
+        if len(contents) > 8192:
+            return None
+        approved = json.loads(contents)
+        digest = approved.get(f"{emotion_id:02d}") if isinstance(approved, dict) else None
+        return digest if isinstance(digest, str) and re.fullmatch(r"[a-f0-9]{64}", digest) else None
+
+    def _read_source(self, emotion_id: int, archive_path: Path | None, *, archive_only: bool) -> bytes | None:
         names = tuple(dict.fromkeys(f"{stem}.{ext}" for ext in ("webp", "png")
                                     for stem in (f"{emotion_id:02d}", str(emotion_id))))
-        for name in names:
-            path = self.image_dir / name
-            if path.is_file():
-                with path.open("rb") as source:
-                    return source.read(self.MAX_BYTES + 1)
+        if not archive_only:
+            for name in names:
+                path = self.image_dir / name
+                if path.is_file():
+                    with path.open("rb") as source:
+                        return source.read(self.MAX_BYTES + 1)
 
-        archive_path = next((path for path in self.zip_candidates if path.is_file()), None)
         if archive_path is None:
             return None
         with zipfile.ZipFile(archive_path) as archive:

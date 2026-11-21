@@ -159,6 +159,8 @@ class MikoChat(commands.Cog):
                     except discord.HTTPException as exc:
                         if exc.status not in {403, 413} and exc.code != 40005:
                             raise
+                        logger.warning("Discord rejected Miko sticker %02d (HTTP %s, code %s)",
+                                       emotion_id, exc.status, exc.code)
                     else:
                         self.recent_images[scope] = (emotion_id, monotonic())
                         self.recent_images.move_to_end(scope)

@@ -71,6 +71,17 @@ class ChatRoutingTests(unittest.IsolatedAsyncioTestCase):
         result = await self.engine.ask_direct(self.message, self.bot, prompt="Love you so much ❤️")
         self.assertFalse(result.attach_emotion)
 
+    async def test_simple_greeting_and_good_news_can_attach_with_plain_replies(self):
+        for prompt, reply, expected in (
+            ("Hey, Miko!", "How are you doing?", 2),
+            ("I got the job!", "You earned it.", 3),
+        ):
+            with self.subTest(prompt=prompt):
+                self.engine.ai.generate_agent.return_value = MikoAIResponse(reply, {})
+                result = await self.engine.ask_direct(self.message, self.bot, prompt=prompt)
+                self.assertTrue(result.attach_emotion)
+                self.assertEqual(result.emotion_id, expected)
+
     async def test_technical_chat_stays_clean_and_text_only(self):
         self.engine.profile.enable_flirting(1, 10, 20)
         self.engine.ai.generate_agent.return_value = MikoAIResponse("Great news. Python can handle that.", {})
@@ -149,6 +160,21 @@ class ReactionAssetTests(unittest.TestCase):
         corrupt = b"not an image"
         (self.root / "02.png").write_bytes(corrupt)
         self.approve(corrupt)
+        self.assertIsNone(self.engine.public_image(2))
+
+    def test_host_pack_uses_its_own_approval_instead_of_the_loose_file(self):
+        loose_picture = self.picture + b"loose"
+        (self.root / "02.png").write_bytes(loose_picture)
+        self.approve(loose_picture)
+        archive_path = self.engine.zip_candidates[0]
+        with zipfile.ZipFile(archive_path, "w") as archive:
+            archive.writestr("nested/02.png", self.picture)
+        archive_path.with_suffix(".public.json").write_text(
+            json.dumps({"02": hashlib.sha256(self.picture).hexdigest()}), encoding="utf-8"
+        )
+        self.assertIsNotNone(self.engine.public_image(2))
+        with zipfile.ZipFile(archive_path, "w") as archive:
+            archive.writestr("nested/02.png", self.picture + b"modified")
         self.assertIsNone(self.engine.public_image(2))
 
     def test_word_boundaries_and_negation_avoid_false_visual_matches(self):
