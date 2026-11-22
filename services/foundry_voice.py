@@ -14,9 +14,10 @@ from azure.identity.aio import ClientSecretCredential
 from discord.ext import voice_recv
 
 DISCORD_FRAME_BYTES = 3840  # 20 ms of 48 kHz, stereo, signed 16-bit PCM.
-BATCH_SECONDS = 0.1
-FRAMES_PER_BATCH = 5
-FOUNDRY_BATCH_BYTES = 4800  # 100 ms of 24 kHz mono PCM.
+BATCH_SECONDS = 0.2
+FRAMES_PER_BATCH = 10
+FOUNDRY_BATCH_BYTES = 9600  # 200 ms of 24 kHz mono PCM.
+TRAILING_SILENCE_BATCHES = 10  # Two seconds for Foundry's end-of-turn detection.
 SPEAKER_PAUSE_SECONDS = 0.7
 MAX_INPUT_FRAMES = 25
 MAX_REPLY_SECONDS = 12
@@ -112,6 +113,7 @@ class SpeakerSink(voice_recv.AudioSink):
 
 async def send_audio(connection, incoming, playback, participants):
     loop = asyncio.get_running_loop()
+    silence_batches = 0
     while True:
         next_batch = loop.time() + BATCH_SECONDS
         frames = []
@@ -127,7 +129,13 @@ async def send_audio(connection, incoming, playback, participants):
         if frames:
             mono = audioop.tomono(b"".join(frames), 2, 0.5, 0.5)
             audio, _ = audioop.ratecv(mono, 2, 1, 48000, 24000, None)
-        await connection.input_audio_buffer.append(audio=audio.ljust(FOUNDRY_BATCH_BYTES, b"\0"))
+        if audio and audioop.max(audio, 2):
+            silence_batches = TRAILING_SILENCE_BATCHES
+            await connection.input_audio_buffer.append(audio=audio.ljust(FOUNDRY_BATCH_BYTES, b"\0"))
+        elif silence_batches:
+            silence_batches -= 1
+            await connection.input_audio_buffer.append(audio=bytes(FOUNDRY_BATCH_BYTES))
+
         await asyncio.sleep(max(0, next_batch - loop.time()))
 
 
