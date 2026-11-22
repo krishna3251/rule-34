@@ -40,7 +40,7 @@ async def check():
             assert main.bot.tree.get_command('search') is not None
             voice = main.bot.tree.get_command('miko')
             assert voice is not None
-            assert {command.name for command in voice.commands} == {'listen', 'leave'}
+            assert {command.name for command in voice.commands} == {'listen', 'leave', 'optin', 'optout'}
             group = main.bot.tree.get_command('mikobrain')
             assert group is not None
             for name in ('privacy', 'remember', 'memories', 'forget', 'style', 'cancel', 'feedback', 'knowledge', 'knowledge_forget', 'status'):

@@ -509,7 +509,7 @@ The project requires Python **3.12** and reads runtime configuration from enviro
 | <code>ENABLE_ANALYTICS</code> | ❌ | Enable bot analytics |
 | <code>ENABLE_AUTO_BACKUP</code> | ❌ | Enable automatic SQLite backups |
 
-### Optional Miko voice test
+### Optional Miko group voice
 
 On the existing bot host, set `FOUNDRY_PROJECT_ENDPOINT` to the project endpoint from
 Foundry's **Continue in code** panel and `FOUNDRY_VOICE_AGENT_NAME` to the agent name.
@@ -517,14 +517,16 @@ Set `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, and `AZURE_CLIENT_SECRET` in the host'
 private settings. The app needs access to the Foundry project. Use the secret
 **Value** in the last field.
 
-Set `MIKO_VOICE_CHANNEL_ID` to the ID of a private Discord voice channel. Give the bot
-**View Channel**, **Connect**, and **Speak** there. Install the requirements and run the
-existing bot as usual. The host needs the Opus system library and Discord voice network
-access. Join the channel as the bot owner and run `/miko listen`. The bot sends only
-the command user's microphone audio to Foundry and plays the reply in the channel.
-Use `/miko leave` to disconnect. Sessions also end when the speaker leaves or after
-15 minutes.
+Give the bot **View Channel**, **Connect**, and **Speak** in the Discord voice channels
+where it can join. Install the requirements and run the bot as usual. The host needs
+the Opus system library and Discord voice network access.
 
+The bot owner can join a voice channel and run `/miko listen`. Each person in that
+channel who wants to speak to Miko uses `/miko optin` to share their own microphone audio
+with Azure Foundry. Use `/miko optout` to stop sharing. Leaving the channel clears that
+person’s opt-in. Miko listens to one speaker at a time, so pause between speakers.
+Use `/miko leave` to disconnect. Sessions also end when the starter leaves or after 15
+minutes. The former `MIKO_VOICE_CHANNEL_ID` setting is no longer needed.
 
 See **[.env.example](.env.example)** for the full template.
 

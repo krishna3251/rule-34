@@ -1,7 +1,8 @@
-"""Opt-in Discord voice commands for the configured Miko test channel."""
+"""Opt-in Discord voice commands for Miko."""
 import asyncio
 import logging
 import os
+from dataclasses import dataclass, field
 
 import discord
 from discord import app_commands
@@ -18,6 +19,14 @@ CONFIG_KEYS = (
 )
 
 
+@dataclass
+class VoiceSession:
+    owner_id: int
+    channel_id: int
+    participants: dict[int, object] = field(default_factory=dict)
+    task: asyncio.Task | None = None
+
+
 class MikoVoice(commands.Cog):
     miko = app_commands.Group(name="miko", description="Control Miko's live voice")
 
@@ -26,12 +35,12 @@ class MikoVoice(commands.Cog):
         self.sessions = {}
 
     async def cog_unload(self):
-        tasks = [task for _, task in self.sessions.values()]
+        tasks = [session.task for session in self.sessions.values() if session.task is not None]
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
 
-    async def run_session(self, interaction, channel, config):
+    async def run_session(self, interaction, channel, config, session):
         ready = asyncio.Event()
         voice = None
         bridge = None
@@ -41,7 +50,7 @@ class MikoVoice(commands.Cog):
             from services.foundry_voice import run_voice
 
             voice = await channel.connect(cls=VoiceRecvClient, timeout=15, reconnect=False, self_deaf=False)
-            bridge = asyncio.create_task(run_voice(voice, interaction.user.id, config, ready))
+            bridge = asyncio.create_task(run_voice(voice, session.participants, config, ready))
             wait_ready = asyncio.create_task(ready.wait())
             try:
                 done, _ = await asyncio.wait(
@@ -56,7 +65,9 @@ class MikoVoice(commands.Cog):
                 await asyncio.gather(wait_ready, return_exceptions=True)
 
             await interaction.followup.send(
-                "Miko is sending your mic audio to Azure. Use /miko leave to end the session.", ephemeral=True,
+                "Miko is ready. Anyone in this channel can use /miko optin to share their mic with Azure "
+                "or /miko optout to stop. Take turns speaking. Use /miko leave to end the session.",
+                ephemeral=True,
             )
             started = True
             try:
@@ -78,72 +89,99 @@ class MikoVoice(commands.Cog):
             message = "Miko's voice session ended unexpectedly." if started else "Miko could not start the voice session. Check the bot logs and Azure setup."
             await interaction.followup.send(message, ephemeral=True)
         finally:
-            self.sessions.pop(interaction.guild_id, None)
+            session.participants.clear()
             if bridge is not None:
                 bridge.cancel()
                 await asyncio.gather(bridge, return_exceptions=True)
             if voice is not None:
                 await voice.disconnect(force=True)
 
-    @miko.command(name="listen", description="Start an Azure voice session in Miko's test channel")
+    @miko.command(name="listen", description="Start a group voice session with Miko in your channel")
     @app_commands.guild_only()
     async def listen(self, interaction: discord.Interaction):
         if not await self.bot.is_owner(interaction.user):
-            await interaction.response.send_message("Only the bot owner can start a voice test.", ephemeral=True)
+            await interaction.response.send_message("Only the bot owner can start a voice session.", ephemeral=True)
             return
         config = tuple(os.getenv(key, "").strip() for key in CONFIG_KEYS)
-        channel_id = os.getenv("MIKO_VOICE_CHANNEL_ID", "").strip()
-        if not all(config) or not channel_id.isdecimal():
-            await interaction.response.send_message("Miko voice is missing its Foundry settings or test channel ID.", ephemeral=True)
+        if not all(config):
+            await interaction.response.send_message("Miko voice is missing its Foundry settings.", ephemeral=True)
             return
         state = getattr(interaction.user, "voice", None)
         channel = state.channel if state else None
-        if not isinstance(channel, discord.VoiceChannel) or channel.id != int(channel_id):
-            await interaction.response.send_message("Join the configured Miko Test voice channel first.", ephemeral=True)
+        if not isinstance(channel, discord.VoiceChannel):
+            await interaction.response.send_message("Join a voice channel first.", ephemeral=True)
             return
         if interaction.guild_id in self.sessions or interaction.guild.voice_client is not None:
             await interaction.response.send_message("Miko already has a voice connection in this server.", ephemeral=True)
             return
         permissions = channel.permissions_for(interaction.guild.me)
-        if not (permissions.connect and permissions.speak):
-            await interaction.response.send_message("Miko needs Connect and Speak in the test channel.", ephemeral=True)
+        if not (permissions.view_channel and permissions.connect and permissions.speak):
+            await interaction.response.send_message("Miko needs View Channel, Connect, and Speak in this channel.", ephemeral=True)
             return
 
         # Reserve the session before the next await to prevent simultaneous joins.
-        task = asyncio.create_task(self.start_after_defer(interaction, channel, config))
-        self.sessions[interaction.guild_id] = (interaction.user.id, task)
+        session = VoiceSession(interaction.user.id, channel.id)
+        self.sessions[interaction.guild_id] = session
+        session.task = asyncio.create_task(self.start_after_defer(interaction, channel, config, session))
 
-    async def start_after_defer(self, interaction, channel, config):
+    async def start_after_defer(self, interaction, channel, config, session):
         try:
             await interaction.response.defer(ephemeral=True, thinking=True)
-            await self.run_session(interaction, channel, config)
+            if getattr(getattr(interaction.user, "voice", None), "channel", None) != channel:
+                await interaction.followup.send("Join the voice channel again to start Miko.", ephemeral=True)
+                return
+            await self.run_session(interaction, channel, config, session)
         finally:
-            session = self.sessions.get(interaction.guild_id)
-            if session and session[1] is asyncio.current_task():
+            if self.sessions.get(interaction.guild_id) is session:
                 self.sessions.pop(interaction.guild_id, None)
+
+    @miko.command(name="optin", description="Send your microphone audio to Azure Foundry for this session")
+    @app_commands.guild_only()
+    async def optin(self, interaction: discord.Interaction):
+        session = self.sessions.get(interaction.guild_id)
+        state = getattr(interaction.user, "voice", None)
+        channel = state.channel if state else None
+        if not session or not channel or channel.id != session.channel_id or session.task.cancelling():
+            await interaction.response.send_message("Join Miko's active voice channel first.", ephemeral=True)
+            return
+        session.participants.setdefault(interaction.user.id, object())
+        await interaction.response.send_message(
+            "Your mic is enabled for this session. Use /miko optout to stop sending audio to Azure.",
+            ephemeral=True,
+        )
+
+    @miko.command(name="optout", description="Stop sending your microphone audio to Azure Foundry")
+    @app_commands.guild_only()
+    async def optout(self, interaction: discord.Interaction):
+        session = self.sessions.get(interaction.guild_id)
+        if session:
+            session.participants.pop(interaction.user.id, None)
+        await interaction.response.send_message("Your mic is off for Miko.", ephemeral=True)
 
     @miko.command(name="leave", description="End Miko's Azure voice session")
     @app_commands.guild_only()
     async def leave(self, interaction: discord.Interaction):
         session = self.sessions.get(interaction.guild_id)
         if session is None:
-            await interaction.response.send_message("Miko has no active voice test here.", ephemeral=True)
+            await interaction.response.send_message("Miko has no active voice session here.", ephemeral=True)
             return
-        owner_id, task = session
-        if interaction.user.id != owner_id and not await self.bot.is_owner(interaction.user):
+        if interaction.user.id != session.owner_id and not await self.bot.is_owner(interaction.user):
             await interaction.response.send_message("Only the bot owner can end this session.", ephemeral=True)
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
-        task.cancel()
-        await asyncio.gather(task, return_exceptions=True)
+        if not session.task.cancelling():
+            session.task.cancel()
+        await asyncio.gather(session.task, return_exceptions=True)
         await interaction.followup.send("Miko's voice session ended.", ephemeral=True)
 
     @commands.Cog.listener()
     async def on_voice_state_update(self, member, before, after):
         session = self.sessions.get(member.guild.id)
-        if session and before.channel != after.channel and member.id in (session[0], self.bot.user.id):
-            if before.channel is not None and not session[1].cancelling():
-                session[1].cancel()
+        if not session or before.channel == after.channel or getattr(before.channel, "id", None) != session.channel_id:
+            return
+        session.participants.pop(member.id, None)
+        if member.id in (session.owner_id, self.bot.user.id) and not session.task.cancelling():
+            session.task.cancel()
 
 
 async def setup(bot):
