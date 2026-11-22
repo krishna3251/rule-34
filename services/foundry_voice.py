@@ -89,6 +89,7 @@ class FoundrySessionError(RuntimeError):
     def __init__(self, error):
         self.error_type = self.safe_identifier(getattr(error, "type", None))
         self.error_code = self.safe_identifier(getattr(error, "code", None))
+        self.error_param = self.safe_identifier(getattr(error, "param", None))
         super().__init__("Foundry reported a realtime session error.")
 
     @staticmethod
