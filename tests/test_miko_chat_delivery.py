@@ -177,6 +177,26 @@ class ReactionAssetTests(unittest.TestCase):
             archive.writestr("nested/02.png", self.picture + b"modified")
         self.assertIsNone(self.engine.public_image(2))
 
+    def test_partial_host_pack_preserves_bundled_moods(self):
+        (self.root / "02.png").write_bytes(self.picture)
+        self.approve(self.picture)
+        archive_path = self.engine.zip_candidates[0]
+        with zipfile.ZipFile(archive_path, "w") as archive:
+            archive.writestr("03.png", self.picture)
+        archive_path.with_suffix(".public.json").write_text(
+            json.dumps({"03": hashlib.sha256(self.picture).hexdigest()}), encoding="utf-8"
+        )
+
+        self.assertIsNotNone(self.engine.public_image(2))
+        self.assertIsNotNone(self.engine.public_image(3))
+
+    def test_bundled_pack_resolves_all_distinct_emotions(self):
+        engine = MikoEmotionEngine()
+        engine.zip_candidates = ()
+        images = [engine.public_image(emotion_id) for emotion_id in engine.EMOTIONS]
+        self.assertNotIn(None, images)
+        self.assertEqual(len(set(images)), 24)
+
     def test_word_boundaries_and_negation_avoid_false_visual_matches(self):
         emotion = self.engine.analyze("make a screenshot", "The signal is weak.", spice_level=0)
         self.assertEqual(emotion.id, 1)

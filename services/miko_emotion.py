@@ -241,13 +241,20 @@ class MikoEmotionEngine:
             archives = [path for path in self.zip_candidates if path.is_file()]
             approved_archive = next((path for path in archives if path.with_suffix(".public.json").is_file()), None)
             archive_path = approved_archive or next(iter(archives), None)
-            manifest_path = (approved_archive.with_suffix(".public.json")
-                             if approved_archive else self.image_dir / "public.json")
-            digest = self._approved_digest(manifest_path, emotion_id)
+            digest = None
+            archive_only = False
+            if approved_archive is not None:
+                digest = self._approved_digest(approved_archive.with_suffix(".public.json"), emotion_id)
+                archive_only = digest is not None
+            if not archive_only:
+                digest = self._approved_digest(self.image_dir / "public.json", emotion_id)
+                # A paired host pack overrides only IDs listed in its approval file.
+                if approved_archive is not None:
+                    archive_path = None
             if digest is None:
                 return None
 
-            raw = self._read_source(emotion_id, archive_path, archive_only=approved_archive is not None)
+            raw = self._read_source(emotion_id, archive_path, archive_only=archive_only)
             if not raw or len(raw) > self.MAX_BYTES or hashlib.sha256(raw).hexdigest() != digest:
                 return None
 
