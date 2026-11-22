@@ -1,4 +1,4 @@
-"""Stream one Discord speaker to a Foundry voice agent."""
+"""Stream turn-based Discord audio to a Foundry voice agent."""
 import asyncio
 import audioop
 import base64
@@ -14,7 +14,11 @@ from azure.identity.aio import ClientSecretCredential
 from discord.ext import voice_recv
 
 DISCORD_FRAME_BYTES = 3840  # 20 ms of 48 kHz, stereo, signed 16-bit PCM.
-FOUNDRY_SILENCE = bytes(4800)  # 100 ms of 24 kHz mono PCM.
+BATCH_SECONDS = 0.1
+FRAMES_PER_BATCH = 5
+FOUNDRY_BATCH_BYTES = 4800  # 100 ms of 24 kHz mono PCM.
+SPEAKER_PAUSE_SECONDS = 0.7
+MAX_INPUT_FRAMES = 25
 MAX_REPLY_SECONDS = 12
 MAX_REPLY_PCM_BYTES = MAX_REPLY_SECONDS * 24000 * 2
 MAX_PLAYBACK_FRAMES = MAX_REPLY_SECONDS * 50
@@ -69,38 +73,62 @@ class DiscordPlayback(discord.AudioSource):
 
 
 class SpeakerSink(voice_recv.AudioSink):
-    def __init__(self, user_id, playback, loop, enqueue):
+    def __init__(self, participants, playback, incoming):
         super().__init__()
-        self.user_id = user_id
+        self.participants = participants
         self.playback = playback
-        self.loop = loop
-        self.enqueue = enqueue
+        self.incoming = incoming
+        self.speaker = None
+        self.last_frame = float("-inf")
 
     def wants_opus(self):
         return False
 
     def write(self, user, data):
-        if user is not None and user.id == self.user_id and not self.playback.playing_reply():
-            self.loop.call_soon_threadsafe(self.enqueue, data.pcm)
+        if user is None or self.playback.playing_reply():
+            return
+        enrollment = self.participants.get(user.id)
+        if enrollment is None or len(data.pcm) != DISCORD_FRAME_BYTES:
+            return
+        now = time.monotonic()
+        if (
+            self.speaker is not None
+            and self.speaker != (user.id, enrollment)
+            and self.participants.get(self.speaker[0]) is self.speaker[1]
+            and now - self.last_frame < SPEAKER_PAUSE_SECONDS
+        ):
+            return
+
+        self.speaker = (user.id, enrollment)
+        self.last_frame = now
+        try:
+            self.incoming.put_nowait((user.id, enrollment, data.pcm))
+        except queue.Full:
+            pass
 
     def cleanup(self):
         pass
 
 
-async def send_audio(connection, incoming, playback):
-    rate_state = None
+async def send_audio(connection, incoming, playback, participants):
+    loop = asyncio.get_running_loop()
     while True:
-        try:
-            stereo = await asyncio.wait_for(incoming.get(), timeout=0.1)
-        except TimeoutError:
-            rate_state = None
-            await connection.input_audio_buffer.append(audio=FOUNDRY_SILENCE)
-            continue
-        if playback.playing_reply():
-            continue
-        mono = audioop.tomono(stereo, 2, 0.5, 0.5)
-        resampled, rate_state = audioop.ratecv(mono, 2, 1, 48000, 24000, rate_state)
-        await connection.input_audio_buffer.append(audio=resampled)
+        next_batch = loop.time() + BATCH_SECONDS
+        frames = []
+        for _ in range(FRAMES_PER_BATCH):
+            try:
+                user_id, enrollment, pcm = incoming.get_nowait()
+            except queue.Empty:
+                break
+            if not playback.playing_reply() and participants.get(user_id) is enrollment:
+                frames.append(pcm)
+
+        audio = b""
+        if frames:
+            mono = audioop.tomono(b"".join(frames), 2, 0.5, 0.5)
+            audio, _ = audioop.ratecv(mono, 2, 1, 48000, 24000, None)
+        await connection.input_audio_buffer.append(audio=audio.ljust(FOUNDRY_BATCH_BYTES, b"\0"))
+        await asyncio.sleep(max(0, next_batch - loop.time()))
 
 
 class FoundrySessionError(RuntimeError):
@@ -130,15 +158,11 @@ async def receive_audio(connection, playback, ready):
             raise FoundrySessionError(event.error)
 
 
-async def run_voice(voice, user_id, config, ready):
+async def run_voice(voice, participants, config, ready):
     loop = asyncio.get_running_loop()
     playback = DiscordPlayback()
-    incoming = asyncio.Queue(maxsize=50)
+    incoming = queue.Queue(maxsize=MAX_INPUT_FRAMES)
     stopped = asyncio.Event()
-
-    def enqueue(pcm):
-        if pcm and not incoming.full():
-            incoming.put_nowait(pcm)
 
     def audio_stopped(_error):
         loop.call_soon_threadsafe(stopped.set)
@@ -156,9 +180,9 @@ async def run_voice(voice, user_id, config, ready):
         client.voice_agents.realtime.connect(agent_name=agent) as connection,
     ):
         voice.play(playback, after=audio_stopped)
-        voice.listen(SpeakerSink(user_id, playback, loop, enqueue), after=audio_stopped)
+        voice.listen(SpeakerSink(participants, playback, incoming), after=audio_stopped)
         workers = [
-            asyncio.create_task(send_audio(connection, incoming, playback)),
+            asyncio.create_task(send_audio(connection, incoming, playback, participants)),
             asyncio.create_task(receive_audio(connection, playback, ready)),
             asyncio.create_task(stopped.wait()),
         ]

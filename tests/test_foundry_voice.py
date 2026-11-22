@@ -1,11 +1,17 @@
-"""Regression coverage for overlong spoken replies."""
+"""Regression coverage for Discord voice playback and group input."""
+import asyncio
+import queue
 import unittest
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 from services.foundry_voice import (
     DISCORD_FRAME_BYTES,
     MAX_PLAYBACK_FRAMES,
     MAX_REPLY_PCM_BYTES,
     DiscordPlayback,
+    SpeakerSink,
+    send_audio,
 )
 
 
@@ -38,3 +44,56 @@ class DiscordPlaybackTests(unittest.TestCase):
         playback.append(b"\x02\x00" * 480)
         playback.finish_reply()
         self.assertEqual(playback.frames.qsize(), MAX_PLAYBACK_FRAMES)
+
+
+class SpeakerSinkTests(unittest.TestCase):
+    def test_ignores_unenrolled_and_overlapping_speakers(self):
+        participants = {1: object(), 2: object()}
+        incoming = queue.Queue(maxsize=2)
+        sink = SpeakerSink(participants, DiscordPlayback(), incoming)
+        data = SimpleNamespace(pcm=bytes(DISCORD_FRAME_BYTES))
+
+        with patch("services.foundry_voice.time.monotonic", return_value=0) as clock:
+            sink.write(SimpleNamespace(id=3), data)
+            self.assertTrue(incoming.empty())
+
+            sink.write(SimpleNamespace(id=1), data)
+            sink.write(SimpleNamespace(id=2), data)
+            self.assertEqual(incoming.get_nowait()[0], 1)
+            self.assertTrue(incoming.empty())
+
+            clock.return_value = 1
+            sink.write(SimpleNamespace(id=2), data)
+            self.assertEqual(incoming.get_nowait()[0], 2)
+
+    def test_full_input_queue_drops_frames_without_throwing(self):
+        incoming = queue.Queue(maxsize=1)
+        sink = SpeakerSink({1: object()}, DiscordPlayback(), incoming)
+        user = SimpleNamespace(id=1)
+        data = SimpleNamespace(pcm=bytes(DISCORD_FRAME_BYTES))
+        sink.write(user, data)
+        sink.write(user, data)
+        self.assertEqual(incoming.qsize(), 1)
+
+
+class FoundryInputTests(unittest.IsolatedAsyncioTestCase):
+    async def test_batches_five_frames_in_one_request(self):
+        enrollment = object()
+        incoming = queue.Queue()
+        for _ in range(5):
+            incoming.put_nowait((1, enrollment, b"\x10\x00" * (DISCORD_FRAME_BYTES // 2)))
+        append = AsyncMock(side_effect=asyncio.CancelledError)
+        connection = SimpleNamespace(input_audio_buffer=SimpleNamespace(append=append))
+        with self.assertRaises(asyncio.CancelledError):
+            await send_audio(connection, incoming, DiscordPlayback(), {1: enrollment})
+        append.assert_awaited_once_with(audio=b"\x10\x00" * 2400)
+        self.assertTrue(incoming.empty())
+
+    async def test_optout_discards_audio_queued_before_revocation(self):
+        incoming = queue.Queue()
+        incoming.put_nowait((1, object(), b"\x10\x00" * (DISCORD_FRAME_BYTES // 2)))
+        append = AsyncMock(side_effect=asyncio.CancelledError)
+        connection = SimpleNamespace(input_audio_buffer=SimpleNamespace(append=append))
+        with self.assertRaises(asyncio.CancelledError):
+            await send_audio(connection, incoming, DiscordPlayback(), {1: object()})
+        append.assert_awaited_once_with(audio=bytes(4800))
