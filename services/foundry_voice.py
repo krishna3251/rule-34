@@ -15,13 +15,17 @@ from discord.ext import voice_recv
 
 DISCORD_FRAME_BYTES = 3840  # 20 ms of 48 kHz, stereo, signed 16-bit PCM.
 FOUNDRY_SILENCE = bytes(4800)  # 100 ms of 24 kHz mono PCM.
+MAX_REPLY_SECONDS = 12
+MAX_REPLY_PCM_BYTES = MAX_REPLY_SECONDS * 24000 * 2
+MAX_PLAYBACK_FRAMES = MAX_REPLY_SECONDS * 50
 
 
 class DiscordPlayback(discord.AudioSource):
     def __init__(self):
-        self.frames = queue.Queue(maxsize=1500)
+        self.frames = queue.Queue(maxsize=MAX_PLAYBACK_FRAMES)
         self.partial = bytearray()
         self.rate_state = None
+        self.reply_bytes = 0
         self.last_audio = float("-inf")
 
     def read(self):
@@ -36,18 +40,32 @@ class DiscordPlayback(discord.AudioSource):
         return not self.frames.empty() or time.monotonic() - self.last_audio < 0.25
 
     def append(self, mono):
+        remaining = MAX_REPLY_PCM_BYTES - self.reply_bytes
+        if remaining == 0:
+            return
+        mono = mono[:remaining]
+        self.reply_bytes += len(mono)
         pcm, self.rate_state = audioop.ratecv(mono, 2, 1, 24000, 48000, self.rate_state)
         self.partial.extend(audioop.tostereo(pcm, 2, 1, 1))
         complete = len(self.partial) // DISCORD_FRAME_BYTES * DISCORD_FRAME_BYTES
         for offset in range(0, complete, DISCORD_FRAME_BYTES):
-            self.frames.put_nowait(bytes(self.partial[offset:offset + DISCORD_FRAME_BYTES]))
+            if not self.enqueue_frame(bytes(self.partial[offset:offset + DISCORD_FRAME_BYTES])):
+                break
         del self.partial[:complete]
+
+    def enqueue_frame(self, frame):
+        try:
+            self.frames.put_nowait(frame)
+        except queue.Full:
+            return False
+        return True
 
     def finish_reply(self):
         if self.partial:
-            self.frames.put_nowait(bytes(self.partial).ljust(DISCORD_FRAME_BYTES, b"\0"))
+            self.enqueue_frame(bytes(self.partial).ljust(DISCORD_FRAME_BYTES, b"\0"))
             self.partial.clear()
         self.rate_state = None
+        self.reply_bytes = 0
 
 
 class SpeakerSink(voice_recv.AudioSink):
@@ -106,7 +124,7 @@ async def receive_audio(connection, playback, ready):
         elif event.type == "response.output_audio.delta":
             delta = event.delta
             playback.append(base64.b64decode(delta) if isinstance(delta, str) else delta)
-        elif event.type == "response.output_audio.done":
+        elif event.type == "response.done":
             playback.finish_reply()
         elif event.type == "error":
             raise FoundrySessionError(event.error)
