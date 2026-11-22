@@ -3,6 +3,7 @@ import asyncio
 import audioop
 import base64
 import queue
+import re
 import time
 
 import aiohttp
@@ -84,6 +85,19 @@ async def send_audio(connection, incoming, playback):
         await connection.input_audio_buffer.append(audio=resampled)
 
 
+class FoundrySessionError(RuntimeError):
+    def __init__(self, error):
+        self.error_type = self.safe_identifier(getattr(error, "type", None))
+        self.error_code = self.safe_identifier(getattr(error, "code", None))
+        super().__init__("Foundry reported a realtime session error.")
+
+    @staticmethod
+    def safe_identifier(value):
+        if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_.-]{1,80}", value):
+            return value
+        return "unavailable"
+
+
 async def receive_audio(connection, playback, ready):
     async for event in connection:
         if event.type == "session.created":
@@ -94,7 +108,7 @@ async def receive_audio(connection, playback, ready):
         elif event.type == "response.output_audio.done":
             playback.finish_reply()
         elif event.type == "error":
-            raise RuntimeError("Foundry reported a realtime session error.")
+            raise FoundrySessionError(event.error)
 
 
 async def run_voice(voice, user_id, config, ready):

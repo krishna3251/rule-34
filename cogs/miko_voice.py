@@ -67,7 +67,12 @@ class MikoVoice(commands.Cog):
             raise
         except Exception as exc:
             logger.warning(
-                "Miko voice failed (%s, status=%s).", type(exc).__name__, getattr(exc, "status_code", None),
+                "Miko voice failed (%s, status=%s, foundry_type=%s, foundry_code=%s, session_ready=%s).",
+                type(exc).__name__,
+                getattr(exc, "status_code", None),
+                getattr(exc, "error_type", None),
+                getattr(exc, "error_code", None),
+                ready.is_set(),
             )
             message = "Miko's voice session ended unexpectedly." if started else "Miko could not start the voice session. Check the bot logs and Azure setup."
             await interaction.followup.send(message, ephemeral=True)
