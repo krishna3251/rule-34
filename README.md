@@ -517,16 +517,47 @@ Set `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, and `AZURE_CLIENT_SECRET` in the host'
 private settings. The app needs access to the Foundry project. Use the secret
 **Value** in the last field.
 
-Give the bot **View Channel**, **Connect**, and **Speak** in the Discord voice channels
-where it can join. Install the requirements and run the bot as usual. The host needs
-the Opus system library and Discord voice network access.
+Give the bot **View Channel**, **Connect**, **Speak**, and **Send Messages** in the
+voice channel. The bot posts a mic-sharing notice before it starts reading audio.
+Install the existing requirements and start the bot with `python main.py` as usual.
+Wispbyte needs Python 3.12, Opus, Discord voice network access, and FFmpeg for Fish Audio.
 
-The bot owner can join a voice channel and run `/miko listen`. Each person in that
-channel who wants to speak to Miko uses `/miko optin` to share their own microphone audio
-with Azure Foundry. Use `/miko optout` to stop sharing. Leaving the channel clears that
-person’s opt-in. Miko listens to one speaker at a time, so pause between speakers.
-Use `/miko leave` to disconnect. Sessions also end when the starter leaves or after 15
-minutes. The former `MIKO_VOICE_CHANNEL_ID` setting is no longer needed.
+When the host provides `FISH_AUDIO_API_KEY`, Miko requests text replies from the
+existing Foundry agent and uses Fish Audio's `s2.1-pro-free` for speech. The default
+reference is `b2d9d8db057042688a5e318b8f405bc2`, with an optional host override via
+`FISH_AUDIO_REFERENCE_ID`. Use a reference your Fish Audio account is authorized to
+use. Fish receives reply text and speech cues. Azure receives opted-in microphone audio.
+The bot keeps microphone frames in memory and writes no voice recordings to disk.
+
+The bot owner starts a session with `/miko listen`. Each speaker uses `/miko optin`
+before their mic audio is sent to Foundry and can revoke access with `/miko optout`.
+Leaving the channel clears their opt-in. Miko uses one active speaker at a time,
+with anonymous speaker labels for the current session. Give each person time to finish.
+A sustained interruption can stop playback. The optional host setting
+`MIKO_INTERRUPT_RMS` adjusts how loud an interruption needs to be (default `950`).
+`/miko leave`, the session starter leaving, or a 15-minute timeout ends the session.
+
+Fish Audio streams MP3 over HTTP to an on-demand FFmpeg decoder. A retry before audio
+starts uses buffered HTTP. The bot allows one Fish synthesis at a time and keeps one
+current reply per guild. If Fish fails before playback, Foundry can synthesize the same
+reply as a fallback. Foundry's existing voice mode is used when Fish is unconfigured
+or Foundry rejects the text-only update. After a Fish cooldown, new turns can try Fish
+again. No paid Fish Audio model is selected.
+
+Server administrators and the bot owner can use:
+
+| Command | Action |
+| --- | --- |
+| `/tts status` or `/voice status` | View provider, connection, queue, and speech timing |
+| `/tts test` | Play a short line with a selected speech cue in the active channel |
+| `/tts provider` and `/tts voice` | Select a provider or reference for the next session |
+| `/tts reset` | Clear this server's overrides. The bot owner can also clear the provider cooldown |
+| `/voice stop` | Clear current and queued playback while keeping the session connected |
+
+Command overrides reset when the bot restarts. To verify a deployment, use
+`/miko listen`, enroll two speakers, test English and Hinglish turns, and try whispering
+and laughter through `/tts test`. Check that playback stops during a sustained
+interruption, opt-out stops new audio, and `/miko leave` disconnects cleanly.
 
 See **[.env.example](.env.example)** for the full template.
 
