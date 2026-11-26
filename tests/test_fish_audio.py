@@ -4,7 +4,7 @@ import base64
 import json
 import shutil
 import unittest
-from contextlib import aclosing
+from contextlib import aclosing, asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -14,8 +14,10 @@ from services.fish_audio import DEFAULT_VOICE, MODEL, FishAudio, SynthesisError,
 from services.foundry_voice import (
     DISCORD_FRAME_BYTES,
     DiscordPlayback,
+    FoundrySessionError,
     VoiceOutput,
     configure_output,
+    open_foundry_voice,
     receive_audio,
 )
 from services.miko_voice_reply import parse_reply
@@ -228,17 +230,74 @@ class FoundryRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.addAsyncCleanup(self.output.close)
 
     async def test_only_enables_speech_after_text_only_ack(self):
-        conn = StubFoundry()
-        conn.recv.return_value = {"type": "session.updated", "session": {"output_modalities": ["text"]}}
-        await configure_output(conn, self.output, {"session": {"instructions": "Existing rules."}})
-        config = conn.session.update.await_args.kwargs["session"]
-        self.assertEqual(config["output_modalities"], ["text"])
-        self.assertTrue(config["instructions"].startswith("Existing rules."))
-        self.assertEqual(self.output.provider, "fish")
+        for field in ("output_modalities", "modalities"):
+            with self.subTest(field=field):
+                conn = StubFoundry()
+                conn.recv.side_effect = [
+                    {"type": "warning"},
+                    {"type": "session.updated", "session": {field: ["text"]}},
+                ]
+                await configure_output(conn, {"session": {"instructions": "Existing rules."}})
+                config = conn.session.update.await_args.kwargs["session"]
+                self.assertEqual(config["output_modalities"], ["text"])
+                self.assertTrue(config["instructions"].startswith("Existing rules."))
 
-        conn.recv.return_value = {"type": "error"}
-        await configure_output(conn, self.output, {})
-        self.assertEqual(self.output.provider, "azure")
+    async def test_reopens_clean_azure_session_when_fish_setup_fails(self):
+        for event, reason in (
+            ({"type": "session.updated", "session": {"output_modalities": ["audio"]}}, "text_mode_not_confirmed"),
+            ({"type": "session.updated", "session": {}}, "text_mode_not_confirmed"),
+            ({"type": "error", "error": {"event_id": "miko-fish-setup", "code": "invalid_value"}}, "invalid_value"),
+            (TimeoutError(), "update_timeout"),
+            (ConnectionResetError(), "connection_closed"),
+        ):
+            with self.subTest(reason=reason):
+                connections = [StubFoundry(), StubFoundry()]
+                connections[0].recv.side_effect = [
+                    {"type": "warning"},
+                    {"type": "session.created"},
+                    event,
+                ]
+                connections[1].recv.return_value = {"type": "session.created"}
+                lifecycle = []
+
+                @asynccontextmanager
+                async def connect(*, agent_name):
+                    self.assertEqual(agent_name, "miko")
+                    i = len(lifecycle) // 2
+                    lifecycle.append(("open", i))
+                    try:
+                        yield connections[i]
+                    finally:
+                        lifecycle.append(("closed", i))
+
+                self.output.provider = "fish"
+                realtime = SimpleNamespace(connect=connect)
+                async with open_foundry_voice(realtime, "miko", self.output) as connection:
+                    self.assertIs(connection, connections[1])
+                    self.assertEqual(lifecycle, [("open", 0), ("closed", 0), ("open", 1)])
+                    self.assertEqual(self.output.provider, "azure")
+                    self.assertEqual(self.output.setup_issue, reason)
+                connections[0].session.update.assert_awaited_once()
+                connections[1].session.update.assert_not_awaited()
+                self.assertEqual(lifecycle[-1], ("closed", 1))
+
+    async def test_startup_server_error_is_not_misclassified_as_fish_failure(self):
+        connection = StubFoundry()
+        connection.recv.return_value = {"type": "error", "error": {"code": "agent_unavailable"}}
+        opened = []
+
+        @asynccontextmanager
+        async def connect(*, agent_name):
+            opened.append(agent_name)
+            yield connection
+
+        with self.assertRaises(FoundrySessionError) as caught:
+            async with open_foundry_voice(SimpleNamespace(connect=connect), "miko", self.output):
+                self.fail("An unsuccessful startup must never become ready.")
+        self.assertEqual(caught.exception.stage, "foundry_session_created")
+        self.assertEqual(caught.exception.error_code, "agent_unavailable")
+        self.assertEqual(opened, ["miko"])
+        connection.session.update.assert_not_awaited()
 
     async def test_completed_text_invokes_fish_once_and_discards_azure_audio(self):
         spoken = []

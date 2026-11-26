@@ -6,7 +6,7 @@ import logging
 import queue
 import re
 import time
-from contextlib import aclosing
+from contextlib import AsyncExitStack, aclosing, asynccontextmanager
 from uuid import uuid4
 
 import aiohttp
@@ -37,6 +37,9 @@ INTERRUPT_PAUSE_SECONDS = 0.25
 FALLBACK_PREFIX = "miko-tts-"
 SPEAKER_EVENT_PREFIX = "miko-speaker-"
 SETUP_EVENT = "miko-fish-setup"
+FOUNDRY_CONNECT_TIMEOUT = 10
+FOUNDRY_OUTPUT_TIMEOUT = 7
+VOICE_STARTUP_TIMEOUT = FOUNDRY_CONNECT_TIMEOUT * 2 + FOUNDRY_OUTPUT_TIMEOUT + 5
 
 
 class DiscordPlayback(discord.AudioSource):
@@ -227,7 +230,8 @@ async def send_audio(connection, incoming, playback, participants, output=None):
 
 
 class FoundrySessionError(RuntimeError):
-    def __init__(self, error):
+    def __init__(self, error, *, stage="foundry_stream"):
+        self.stage = stage
         self.error_type = self.safe_identifier(event_field(error, "type"))
         self.error_code = self.safe_identifier(event_field(error, "code"))
         self.error_param = self.safe_identifier(event_field(error, "param"))
@@ -246,40 +250,95 @@ def event_field(value, name, default=None):
     return getattr(value, name, default)
 
 
-async def configure_output(connection, output, first_event):
-    """Wait for a text-only acknowledgement before allowing Fish synthesis."""
-    if output.provider != "fish":
-        return
-    session = event_field(first_event, "session")
-    original = event_field(session, "instructions") or ""
-    original_modes = event_field(session, "output_modalities") or ["audio"]
-    await connection.session.update(
-        session={
-            "type": "realtime",
-            "output_modalities": ["text"],
-            "instructions": f"{original}\n{VOICE_INSTRUCTIONS}".strip(),
-        },
-        event_id=SETUP_EVENT,
-    )
-    async with asyncio.timeout(7):
+class VoiceStartupError(RuntimeError):
+    def __init__(self, stage, reason):
+        self.stage = stage
+        self.error_code = reason
+        super().__init__("Miko could not start the selected voice provider.")
+
+
+class FishOutputUnavailable(VoiceStartupError):
+    def __init__(self, reason):
+        super().__init__("foundry_output_update", reason)
+
+
+async def wait_for_session(connection):
+    try:
         while True:
             event = await connection.recv()
-            match event_field(event, "type"):
-                case "session.updated":
-                    modes = event_field(event_field(event, "session"), "output_modalities")
-                    if modes and list(modes) == ["text"]:
-                        return
-                    await connection.session.update(
-                        session={"type": "realtime", "output_modalities": original_modes, "instructions": original},
-                    )
-                    raise RuntimeError("Foundry did not confirm text-only voice output.")
-                case "error":
-                    error = event_field(event, "error")
-                    if event_field(error, "event_id") not in (None, SETUP_EVENT):
-                        raise FoundrySessionError(error)
+            kind = event_field(event, "type")
+            if kind == "session.created":
+                return event
+            if kind == "error":
+                raise FoundrySessionError(event_field(event, "error"), stage="foundry_session_created")
+            logger.debug("Foundry startup received %s before session creation.", FoundrySessionError.safe_identifier(kind))
+    except ConnectionResetError as exc:
+        raise VoiceStartupError("foundry_session_created", "connection_closed") from exc
+
+
+async def configure_output(connection, first_event):
+    """Enable Fish only after Foundry confirms that it will send text."""
+    session = event_field(first_event, "session")
+    original = event_field(session, "instructions") or ""
+    try:
+        async with asyncio.timeout(FOUNDRY_OUTPUT_TIMEOUT):
+            await connection.session.update(
+                session={
+                    "type": "realtime",
+                    "output_modalities": ["text"],
+                    "instructions": f"{original}\n{VOICE_INSTRUCTIONS}".strip(),
+                },
+                event_id=SETUP_EVENT,
+            )
+            while True:
+                event = await connection.recv()
+                match event_field(event, "type"):
+                    case "session.updated":
+                        settings = event_field(event, "session")
+                        modes = event_field(settings, "output_modalities")
+                        if modes is None:
+                            modes = event_field(settings, "modalities")
+                        if isinstance(modes, (list, tuple)) and list(modes) == ["text"]:
+                            return
+                        raise FishOutputUnavailable("text_mode_not_confirmed")
+                    case "error":
+                        error = event_field(event, "error")
+                        if event_field(error, "event_id") not in (None, SETUP_EVENT):
+                            raise FoundrySessionError(error, stage="foundry_output_update")
+                        raise FishOutputUnavailable(FoundrySessionError.safe_identifier(event_field(error, "code")))
+    except TimeoutError as exc:
+        raise FishOutputUnavailable("update_timeout") from exc
+    except (ConnectionError, aiohttp.ClientConnectionError) as exc:
+        raise FishOutputUnavailable("connection_closed") from exc
+
+
+@asynccontextmanager
+async def open_foundry_voice(realtime, agent, output):
+    """Reopen the original Azure mode once if Fish setup leaves session state uncertain."""
+    while True:
+        # Bound setup only. Once ready, this connection lives for the whole call.
+        async with AsyncExitStack() as stack:
+            try:
+                async with asyncio.timeout(FOUNDRY_CONNECT_TIMEOUT):
+                    connection = await stack.enter_async_context(realtime.connect(agent_name=agent))
+                    first_event = await wait_for_session(connection)
+            except TimeoutError as exc:
+                raise VoiceStartupError("foundry_session_created", "startup_timeout") from exc
+            if output.provider == "fish":
+                try:
+                    await configure_output(connection, first_event)
+                except FishOutputUnavailable as exc:
                     output.provider = "azure"
-                    logger.warning("Foundry rejected text-only voice setup; using the existing Azure voice.")
-                    return
+                    output.setup_issue = exc.error_code
+                    logger.warning(
+                        "Foundry did not enable Fish Audio text mode (code=%s). Reopening with Azure voice.",
+                        exc.error_code,
+                    )
+                    continue
+
+            logger.info("Miko Foundry session ready (provider=%s).", output.provider)
+            yield connection
+            return
 
 
 class VoiceOutput:
@@ -288,6 +347,7 @@ class VoiceOutput:
         self.playback = playback
         self.fish = fish
         self.provider = provider
+        self.setup_issue = None
         self.voice_id = voice_id
         self.generation = 0
         self.jobs = set()
@@ -532,14 +592,8 @@ async def run_voice(voice, participants, config, ready, output, interrupt_rms, c
             allow_preview=True,
             transport=AioHttpTransport(session=http, session_owner=False),
         ) as client,
-        client.voice_agents.realtime.connect(agent_name=agent) as connection,
+        open_foundry_voice(client.voice_agents.realtime, agent, output) as connection,
     ):
-        event = await connection.recv()
-        if event_field(event, "type") == "error":
-            raise FoundrySessionError(event_field(event, "error"))
-        if event_field(event, "type") != "session.created":
-            raise RuntimeError("Foundry did not create the voice session.")
-        await configure_output(connection, output, event)
         voice.play(playback, after=audio_stopped)
         voice.listen(
             SpeakerSink(
