@@ -541,8 +541,9 @@ Fish Audio streams MP3 over HTTP to an on-demand FFmpeg decoder. A retry before 
 starts uses buffered HTTP. The bot allows one Fish synthesis at a time and keeps one
 current reply per guild. If Fish fails before playback, Foundry can synthesize the same
 reply as a fallback. Foundry's existing voice mode is used when Fish is unconfigured
-or Foundry rejects the text-only update. After a Fish cooldown, new turns can try Fish
-again. No paid Fish Audio model is selected.
+or Foundry fails to confirm the text-only update. In that case the bot starts a fresh
+Azure session and shows the provider in the ready message. During a Fish-enabled
+session, new turns can try Fish after a cooldown. No paid Fish Audio model is selected.
 
 Server administrators and the bot owner can use:
 

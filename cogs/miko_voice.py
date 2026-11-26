@@ -61,9 +61,10 @@ class MikoVoice(commands.Cog):
         voice = None
         bridge = None
         started = False
+        stage = "load_voice"
         try:
             from discord.ext.voice_recv import VoiceRecvClient
-            from services.foundry_voice import DiscordPlayback, VoiceOutput, run_voice
+            from services.foundry_voice import VOICE_STARTUP_TIMEOUT, DiscordPlayback, VoiceOutput, run_voice
 
             output = VoiceOutput(
                 DiscordPlayback(), self.fish, "azure",
@@ -71,7 +72,9 @@ class MikoVoice(commands.Cog):
             )
             output.prepare(self.providers.get(interaction.guild_id, "fish"))
             session.output = output
+            stage = "discord_connect"
             voice = await channel.connect(cls=VoiceRecvClient, timeout=15, reconnect=False, self_deaf=False)
+            stage = "mic_notice"
             await channel.send(
                 "Miko voice session started. Your mic is off for Miko unless you use **/miko optin**. "
                 "Azure Foundry processes opted-in speech. If Fish Audio is enabled, it receives Miko's "
@@ -82,13 +85,14 @@ class MikoVoice(commands.Cog):
             def connected(connection):
                 session.connection = connection
 
+            stage = "foundry_startup"
             bridge = asyncio.create_task(run_voice(
                 voice, session.participants, config, ready, output, self.interrupt_rms, connected,
             ))
             wait_ready = asyncio.create_task(ready.wait())
             try:
                 done, _ = await asyncio.wait(
-                    (bridge, wait_ready), timeout=20, return_when=asyncio.FIRST_COMPLETED,
+                    (bridge, wait_ready), timeout=VOICE_STARTUP_TIMEOUT, return_when=asyncio.FIRST_COMPLETED,
                 )
                 if bridge in done:
                     bridge.result()
@@ -99,12 +103,17 @@ class MikoVoice(commands.Cog):
                 wait_ready.cancel()
                 await asyncio.gather(wait_ready, return_exceptions=True)
 
+            stage = "announce_ready"
+            provider = "Fish Audio" if output.provider == "fish" else "Azure"
+            if output.setup_issue:
+                provider = "Azure (Foundry could not enable Fish Audio for this session)"
             await interaction.followup.send(
-                f"Miko is ready. Voice provider: {'Fish Audio' if output.provider == 'fish' else 'Azure'}. "
+                f"Miko is ready. Voice provider: {provider}. "
                 "Use /miko optin to speak and give each person time to finish. Use /miko leave to end the session.",
                 ephemeral=True,
             )
             started = True
+            stage = "voice_stream"
             try:
                 await asyncio.wait_for(bridge, timeout=15 * 60)
             except TimeoutError:
@@ -113,9 +122,10 @@ class MikoVoice(commands.Cog):
             raise
         except Exception as exc:
             logger.warning(
-                "Miko voice failed (%s, status=%s, foundry_type=%s, foundry_code=%s, foundry_param=%s, session_ready=%s).",
+                "Miko voice failed (stage=%s, error=%s, status=%s, foundry_type=%s, foundry_code=%s, foundry_param=%s, session_ready=%s).",
+                getattr(exc, "stage", stage),
                 type(exc).__name__,
-                getattr(exc, "status_code", None),
+                getattr(exc, "status_code", getattr(exc, "status", None)),
                 getattr(exc, "error_type", None),
                 getattr(exc, "error_code", None),
                 getattr(exc, "error_param", None),
@@ -237,7 +247,9 @@ class MikoVoice(commands.Cog):
         phase = ("playing" if output.playback.playing_reply() else output.phase) if output else "idle"
         fallback = "available through Foundry" if not output or output.fallback_allowed else "rejected by Foundry"
         fish_health = fish.unavailable(reference) or "available"
-        if output and requested == "fish" and output.provider == "azure" and fish_health == "available":
+        if output and output.setup_issue:
+            fish_health = f"Foundry setup: {output.setup_issue}"
+        elif output and requested == "fish" and output.provider == "azure" and fish_health == "available":
             fish_health = "using Azure for this session"
 
         def average(total, count):
