@@ -106,6 +106,60 @@ class ChatRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result.completed)
         self.assertFalse(result.attach_emotion)
 
+    async def test_difficult_comparison_checks_the_draft_and_records_only_final_reply(self):
+        self.engine.ai.generate_agent.return_value = MikoAIResponse("Option A.", {}, provider="openrouter")
+        self.engine.ai.review_answer = AsyncMock(return_value="Option B fits your price limit.")
+        result = await self.engine.ask_direct(self.message, self.bot,
+                                              prompt="Compare these two options within ₹500.")
+        args = self.engine.ai.generate_agent.call_args
+        self.assertTrue(args.kwargs["deliberate"])
+        self.assertIn("same factors", args.args[0][0]["content"])
+        self.engine.ai.review_answer.assert_awaited_once()
+        self.assertEqual(result.text, "Option B fits your price limit.")
+        self.assertFalse(result.attach_emotion)
+        history = self.engine.memory.history(1, 10, 20, private=True)
+        self.assertEqual([reply["content"] for reply in history if reply["role"] == "assistant"],
+                         [result.text])
+
+    async def test_bad_review_keeps_the_draft_and_casual_chat_skips_review(self):
+        self.engine.ai.review_answer = AsyncMock(return_value="Main check karunga.")
+        self.engine.ai.generate_agent.return_value = MikoAIResponse(
+            "Main do steps bata sakti hoon.", {}, provider="openrouter")
+        result = await self.engine.ask_direct(self.message, self.bot, prompt="Help me fix it step by step.")
+        self.assertEqual(result.text, "Main do steps bata sakti hoon.")
+        self.engine.ai.review_answer.assert_awaited_once()
+
+        self.engine.ai.review_answer.reset_mock()
+        self.engine.ai.generate_agent.return_value = MikoAIResponse("Hello!", {}, provider="openrouter")
+        await self.engine.ask_direct(self.message, self.bot, prompt="Hello")
+        self.assertFalse(self.engine.ai.generate_agent.call_args.kwargs["deliberate"])
+        self.engine.ai.review_answer.assert_not_awaited()
+
+    async def test_identity_works_offline_and_masculine_model_reply_gets_a_retry(self):
+        result = await self.engine.ask_direct(self.message, self.bot, prompt="Tum ladki ho ya ladka?")
+        self.assertIn("rakhti hoon", result.text)
+        self.engine.ai.generate_agent.assert_not_awaited()
+
+        self.engine.ai.generate_agent.side_effect = [
+            MikoAIResponse("Main check karunga.", {}),
+            MikoAIResponse("Main check karungi.", {}),
+        ]
+        result = await self.engine.ask_direct(self.message, self.bot, prompt="Please check my wording.")
+        self.assertEqual(result.text, "Main check karungi.")
+        self.assertTrue(self.engine.ai.generate_agent.call_args.kwargs["strict"])
+        self.assertIn("feminine grammar", self.engine.ai.generate_agent.call_args.args[0][1]["content"])
+
+    async def test_revoked_access_skips_review_with_restricted_context(self):
+        async def draft(*args, **kwargs):
+            self.bot.db.is_user_verified.return_value = False
+            return MikoAIResponse("Draft", {}, provider="openrouter")
+
+        self.engine.ai.generate_agent.side_effect = draft
+        self.engine.ai.review_answer = AsyncMock()
+        result = await self.engine.ask_direct(self.message, self.bot, prompt="Compare these two options.")
+        self.assertEqual(result.reason, "access_revoked")
+        self.engine.ai.review_answer.assert_not_awaited()
+
     async def test_admin_tone_downgrade_during_generation_causes_clean_retry(self):
         self.engine.profile.enable_flirting(1, 10, 20)
         level = Mock(return_value=2)

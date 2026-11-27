@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -24,6 +25,7 @@ class MikoDecision:
     mood: str = "playful"
     reason: str = ""
     confidence: float = 0.0
+    reasoning: str = ""
 
 
 class MikoDecisionEngine:
@@ -34,6 +36,18 @@ class MikoDecisionEngine:
     """
 
     FOCUSED_INTENTS = frozenset({"action", "coding", "search", "help", "serious", "clarify"})
+    COMPARE = re.compile(
+        r"\b(?:compare|trade[- ]?offs?|pros and cons|which (?:one )?should i "
+        r"(?:choose|pick|buy|use)|dono (?:mein|me) (?:se )?kaunsa|comparison)\b",
+        re.IGNORECASE,
+    )
+    PLAN = re.compile(
+        r"\b(?:step[- ]by[- ]step|make (?:me )?a plan|plan (?:my|a|for)|"
+        r"how (?:can|should|do) i (?:plan|fix|solve)|think (?:it )?through|"
+        r"think (?:carefully|before)|work this out|solve this|reason through|"
+        r"kaise (?:karun|karu|solve karun))\b",
+        re.IGNORECASE,
+    )
 
     SAFETY_REASONS = frozenset({
         "minor_related",
@@ -87,6 +101,18 @@ class MikoDecisionEngine:
             return 0.90
         return 0.65
 
+    @classmethod
+    def _reasoning(cls, prompt: str, intent: str, reason: str) -> str:
+        if reason in cls.SAFETY_REASONS or intent in {"serious", "goodbye", "action", "clarify"}:
+            return ""
+        if cls.COMPARE.search(prompt):
+            return "comparison"
+        if intent == "coding":
+            return "diagnosis"
+        if cls.PLAN.search(prompt):
+            return "planning"
+        return ""
+
     def decide(
         self,
         gate: GateDecision,
@@ -117,7 +143,8 @@ class MikoDecisionEngine:
                 user_cap = 2
 
         level = max(0, min(2, gate.spice_level, user_cap))
-        if safety or intent in self.FOCUSED_INTENTS or gate.mood in {"serious", "concerned"}:
+        reasoning = self._reasoning(prompt, intent, gate.reason)
+        if safety or reasoning or intent in self.FOCUSED_INTENTS or gate.mood in {"serious", "concerned"}:
             level = 0
         mood = "concerned" if intent == "serious" else gate.mood
 
@@ -139,4 +166,5 @@ class MikoDecisionEngine:
             mood=mood,
             reason=gate.reason,
             confidence=self._confidence(prompt, intent),
+            reasoning=reasoning,
         )

@@ -417,6 +417,64 @@ class ProviderTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises((ValueError, RuntimeError)):
                 self.ai._parse_provider_response(body, provider='test', model='test')
 
+    async def test_review_stays_with_original_provider_and_respects_deadline_and_quota(self):
+        from services.brain.runtime import request_deadline
+
+        draft = MikoAIResponse("Draft", {}, provider="openrouter", model="openai/gpt-4o-mini")
+        self.ai._openrouter_generate = AsyncMock(return_value=MikoAIResponse("Revised", {}))
+        self.ai._groq_generate = AsyncMock()
+        token = request_deadline.set(asyncio.get_running_loop().time() + 0.1)
+        try:
+            self.assertIsNone(await self.ai.review_answer(self.messages, draft))
+        finally:
+            request_deadline.reset(token)
+        self.ai._openrouter_generate.assert_not_awaited()
+
+        self.ai.config = replace(self.ai.config, provider_daily_limit=1)
+        self.assertEqual(await self.ai.review_answer(self.messages, draft), "Revised")
+        args = self.ai._openrouter_generate.call_args
+        self.assertEqual(args.kwargs["tool_schemas"], [])
+        self.assertFalse(args.kwargs["allow_web"])
+        self.assertIn("Draft", str(args.args[0]))
+        self.assertIsNone(await self.ai.review_answer(self.messages, draft))
+        self.ai._openrouter_generate.assert_awaited_once()
+        self.ai._groq_generate.assert_not_awaited()
+
+    async def test_native_groq_reasoning_uses_one_call_and_keeps_analysis_private(self):
+        create = AsyncMock(return_value=completion("<think>private draft</think>Finished answer."))
+        self.ai.groq_client = NS(chat=NS(completions=NS(create=create)), close=Mock())
+        self.ai.groq_model = "openai/gpt-oss-20b"
+        self.ai.openrouter_api_key = ""
+        with patch.dict(os.environ, {"MIKO_REASONING_EFFORT": "low"}):
+            result = await self.ai.generate_agent(self.messages, allow_web=False, deliberate=True)
+        self.assertEqual(create.call_args.kwargs["reasoning_effort"], "medium")
+        self.assertGreater(create.call_args.kwargs["max_completion_tokens"], 450)
+        self.assertFalse(create.call_args.kwargs["include_reasoning"])
+        self.assertEqual(result.text, "Finished answer.")
+        self.assertEqual(result.assistant_message["content"], result.text)
+        self.assertIsNone(await self.ai.review_answer(self.messages, result))
+        create.assert_awaited_once()
+
+    async def test_openrouter_sends_native_reasoning_parameters_only_for_gpt_oss(self):
+        async def chunks():
+            yield json.dumps(completion("Answer.")).encode()
+
+        response = NS(status=200, content=NS(iter_chunked=lambda _: chunks()))
+        context = AsyncMock()
+        context.__aenter__.return_value = response
+        self.ai.session = NS(closed=False, post=Mock(return_value=context), close=AsyncMock())
+        self.ai.openrouter_api_key = "synthetic"
+        for model in ("openai/gpt-4o-mini", "openai/gpt-oss-20b:free"):
+            with self.subTest(model=model), patch.dict(os.environ, {"MIKO_REASONING_EFFORT": "low"}):
+                self.ai.openrouter_model = model
+                result = await self.ai.generate_agent(self.messages, allow_web=False, deliberate=True)
+                self.assertEqual(result.text, "Answer.")
+                payload = self.ai.session.post.call_args.kwargs["json"]
+                if model == "openai/gpt-4o-mini":
+                    self.assertNotIn("reasoning", payload)
+                else:
+                    self.assertEqual(payload["reasoning"], {"effort": "medium", "exclude": True})
+
 
 class LocalHTTPTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):

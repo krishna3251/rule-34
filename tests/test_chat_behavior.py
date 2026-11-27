@@ -14,6 +14,19 @@ from services.miko_social import MikoSocialEngine
 
 
 class ChatBehaviorTests(unittest.TestCase):
+    def test_feminine_voice_check_distinguishes_miko_from_other_speakers(self):
+        for text in ("I'm a guy.", "Main check karunga aur bata dunga.", "Samajh gaya.",
+                     "मैं बता रहा हूँ।"):
+            with self.subTest(text=text):
+                self.assertEqual(MikoResponseProcessor().validate(1, text, 0)[2], "persona")
+        for text in ("Main check karungi. Bata sakti hoon.", "मैं समझ गई।",
+                     "He said he was a boy.", 'Example: "He spoke. Main bataunga."',
+                     "> Main check karunga.\nHere is the feminine form.",
+                     "Use `Main check karunga` for the masculine form.",
+                     "Mera jawab yeh hai.", "Main samajh gayi ki woh kahan gaya tha."):
+            with self.subTest(text=text):
+                self.assertTrue(MikoResponseProcessor().validate(1, text, 0)[0])
+
     def test_english_hinglish_and_punctuation_opt_outs(self):
         for text in ["Stop flirting, please!", "Miko, don't flirt with me.",
                      "Keep it platonic please", "flirt mat karo", "flirting band karo",

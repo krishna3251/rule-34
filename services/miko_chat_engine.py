@@ -130,6 +130,9 @@ class MikoChatEngine:
         strict: bool = False,
         allow_web: bool = True,
         temperature: float | None = None,
+        deliberate: bool = False,
+        spice_level: int = 0,
+        restricted_context: bool = False,
     ) -> tuple[str, bool, bool]:
         working = list(messages)
         used_web = False
@@ -147,11 +150,25 @@ class MikoChatEngine:
                 allow_web=allow_web,
                 strict=strict,
                 temperature=temperature,
+                deliberate=deliberate,
             )
             used_web = used_web or ai_result.web_search_used
 
             if not ai_result.tool_calls:
-                return ai_result.text.strip(), used_web, ai_result.provider != "none"
+                draft = ai_result.text.strip()
+                can_review = (deliberate and draft and ai_result.provider in {"local", "openrouter", "groq"}
+                              and not strict and not allow_web and not used_web and not allow_actions
+                              and not total_tool_calls)
+                if can_review and (not restricted_context or await content_access(
+                        bot, message.guild, message.channel, message.author)):
+                    reviewed = await self.ai.review_answer(working, ai_result)
+                    if reviewed:
+                        valid, cleaned, _ = self.response.validate(
+                            self._scope(message), reviewed, spice_level, remember=False
+                        )
+                        if valid:
+                            draft = cleaned
+                return draft, used_web, ai_result.provider != "none"
 
             if total_tool_calls + len(ai_result.tool_calls) > self.max_tool_calls:
                 logger.warning(
@@ -253,6 +270,7 @@ class MikoChatEngine:
             response_mode=decision.response_mode,
             memory_scope="user+guild+channel",
             web_search=decision.web_search,
+            reasoning=decision.reasoning,
         )
 
         temperature = self._adaptive_temperature(
@@ -271,6 +289,9 @@ class MikoChatEngine:
                 strict=decision.strict,
                 allow_web=decision.web_search,
                 temperature=temperature,
+                deliberate=bool(decision.reasoning),
+                spice_level=decision.spice_level,
+                restricted_context=bool(profile.get("catalog_allowed")),
             )
         finally:
             self.gate.release_ai_slot()
@@ -311,10 +332,16 @@ class MikoChatEngine:
                 conversation_key=conversation_key,
                 turn_count=turn,
                 priority="high",
-                response_mode="safety_refusal",
+                response_mode=decision.response_mode if validation_reason == "persona" else "safety_refusal",
                 memory_scope="user+guild+channel",
                 web_search=False,
+                reasoning=decision.reasoning if validation_reason == "persona" else "",
             )
+            if validation_reason == "persona":
+                retry_messages.insert(1, {
+                    "role": "system",
+                    "content": "Answer the original request in Miko’s voice. Check that every reference to yourself uses feminine grammar.",
+                })
             await self.gate.acquire_ai_slot()
             try:
                 retry, _, retry_completed = await self._agent_generate(
@@ -370,7 +397,8 @@ class MikoChatEngine:
             priority=decision.priority,
             web_search_used=used_web,
             completed=True,
-            attach_emotion=(valid and not decision.strict and decision.intent in {"chat", "gaming", "goodbye"}
+            attach_emotion=(valid and not decision.strict and not decision.reasoning
+                            and decision.intent in {"chat", "gaming", "goodbye"}
                             and decision.mood not in {"serious", "concerned"}
                             and emotion.score >= MikoEmotionEngine.MIN_IMAGE_SCORE),
         )
@@ -489,6 +517,8 @@ class MikoChatEngine:
         prefs = await worker(self.store.preferences, scope) if self.store else {'history': False, 'external': True, 'style': 'adaptive'}
         # Exact calculations and explicit retrieval never spend provider quota.
         local = self.skills.calculate(decision.prompt) if not decision.strict else None
+        if local is None and not decision.strict:
+            local = MikoPersonality.identity_reply(decision.prompt)
         if local is None and not decision.strict and decision.prompt.casefold().strip() == 'my id':
             local = str(message.author.id)
         if local is None and not decision.strict and decision.prompt.casefold().strip() in {'server info', 'channel info', 'list commands'}:
